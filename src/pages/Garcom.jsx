@@ -1,244 +1,134 @@
 import { useState } from "react";
-import { produtos, categoriaLabels } from "../data/cardapio";
+import { useRestaurante } from "../store/contexto";
+import { comandasNaCozinha, mesaOcupada, statusMesa, totalMesa } from "../store/regras";
+import { moeda, plural } from "../utils/format";
+import { Botao, Cabecalho, Cartao, Etiqueta, Pagina } from "../components/ui";
 
-function moeda(valor) {
-  return "R$ " + valor.toFixed(2);
-}
+const estilos = {
+  livre: { card: "bg-zinc-900/80 border-zinc-800 hover:border-zinc-600", etiqueta: null },
+  ocupada: {
+    card: "bg-orange-500/10 border-orange-500/30 hover:border-orange-500/60",
+    etiqueta: <Etiqueta cor="laranja">Ocupada</Etiqueta>,
+  },
+  preparo: {
+    card: "bg-orange-500/10 border-yellow-500/40 hover:border-yellow-500/70",
+    etiqueta: <Etiqueta cor="amarelo">⏳ Preparo</Etiqueta>,
+  },
+  pronto: {
+    card: "bg-green-500/10 border-green-500/50 hover:border-green-500/80 ring-2 ring-green-500/30",
+    etiqueta: <Etiqueta cor="verde" className="animate-pulse">✓ Pronto</Etiqueta>,
+  },
+};
 
-export default function Garcom({
-  mesas,
-  mesaSelecionada,
-  setMesaSelecionada,
-  abrirMesa,
-  adicionarItem,
-  removerItem,
-  enviarParaCozinha,
-  setObservacao,
-  voltarHome,
-}) {
-  const [categoriaAberta, setCategoriaAberta] = useState(null);
-  const [obsTemp, setObsTemp] = useState("");
-  const mesaAtual = mesas.find((m) => m.id === mesaSelecionada);
-
-  if (mesaAtual) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white p-4 pb-24">
-        <div className="max-w-lg mx-auto space-y-4">
-          {/* Header */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-orange-500">
-                Mesa {mesaAtual.numero}
-              </h1>
-              <p className="text-zinc-400 text-sm flex items-center gap-2">
-                {mesaAtual.status === "ocupada" && (
-                  <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-                )}
-                {mesaAtual.status}
-                {mesaAtual.horaPedido && (
-                  <span className="text-zinc-500">· Pedido {mesaAtual.horaPedido}</span>
-                )}
-              </p>
-            </div>
-            <button
-              onClick={() => setMesaSelecionada(null)}
-              className="bg-zinc-800 hover:bg-zinc-700 active:scale-95 transition-all px-4 py-2 rounded-xl text-sm"
-            >
-              ← Voltar
-            </button>
-          </div>
-
-          {/* Status da cozinha */}
-          {mesaAtual.enviadoCozinha && (
-            <div
-              className={`p-3 rounded-xl text-center text-sm font-semibold ${
-                mesaAtual.concluidoCozinha
-                  ? "bg-green-500/10 text-green-400 border border-green-500/20"
-                  : "bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"
-              }`}
-            >
-              {mesaAtual.concluidoCozinha
-                ? "✅ Pedido pronto! Pode servir."
-                : "⏳ Pedido em preparo na cozinha..."}
-            </div>
-          )}
-
-          {/* Total */}
-          <div className="bg-zinc-900/80 backdrop-blur p-4 rounded-2xl shadow border border-zinc-800">
-            <p className="text-sm text-zinc-400">Total atual</p>
-            <p className="text-3xl font-bold text-orange-500">
-              {moeda(mesaAtual.total)}
-            </p>
-          </div>
-
-          {/* Pedidos da mesa */}
-          <div className="bg-zinc-900/80 backdrop-blur p-4 rounded-2xl shadow border border-zinc-800">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-lg">Pedidos</h3>
-              {mesaAtual.pedidos.length > 0 && !mesaAtual.enviadoCozinha && (
-                <button
-                  onClick={enviarParaCozinha}
-                  className="bg-orange-500 hover:bg-orange-600 active:scale-95 transition-all text-black font-semibold px-4 py-2 rounded-xl text-sm"
-                >
-                  Enviar à cozinha
-                </button>
-              )}
-            </div>
-
-            {mesaAtual.pedidos.length === 0 ? (
-              <p className="text-zinc-500 text-sm">Nenhum item adicionado.</p>
-            ) : (
-              <div className="space-y-1">
-                {mesaAtual.pedidos.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex justify-between items-center border-b border-zinc-800/50 py-2"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium truncate">
-                        {item.qtd}x {item.nome}
-                      </p>
-                      <p className="text-sm text-orange-400">
-                        {moeda(item.preco * item.qtd)}
-                      </p>
-                    </div>
-                    <div className="flex gap-1.5 ml-3">
-                      <button
-                        onClick={() => removerItem(item.nome)}
-                        className="bg-red-600/80 hover:bg-red-600 active:scale-90 transition-all w-8 h-8 rounded-lg font-bold text-sm flex items-center justify-center"
-                      >
-                        −
-                      </button>
-                      <button
-                        onClick={() => adicionarItem(item)}
-                        className="bg-green-600/80 hover:bg-green-600 active:scale-90 transition-all w-8 h-8 rounded-lg font-bold text-sm flex items-center justify-center"
-                      >
-                        +
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Observação */}
-          <div className="bg-zinc-900/80 backdrop-blur p-4 rounded-2xl shadow border border-zinc-800">
-            <h3 className="font-semibold text-sm text-zinc-400 mb-2">
-              Observação do pedido
-            </h3>
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Ex: Sem cebola, bem passado..."
-                value={mesaAtual.observacao}
-                onChange={(e) => setObservacao(e.target.value)}
-                className="flex-1 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-500 transition placeholder:text-zinc-600"
-              />
-            </div>
-          </div>
-
-          {/* Cardápio */}
-          <div className="space-y-2">
-            <h3 className="font-semibold text-lg text-zinc-300">Cardápio</h3>
-            {Object.entries(produtos).map(([cat, items]) => (
-              <div
-                key={cat}
-                className="bg-zinc-900/80 backdrop-blur rounded-2xl shadow border border-zinc-800 overflow-hidden"
-              >
-                <button
-                  onClick={() =>
-                    setCategoriaAberta(categoriaAberta === cat ? null : cat)
-                  }
-                  className="w-full flex items-center justify-between p-4 hover:bg-zinc-800/50 transition"
-                >
-                  <span className="text-orange-500 font-bold">
-                    {categoriaLabels[cat]}
-                  </span>
-                  <span
-                    className={`text-zinc-500 transition-transform ${
-                      categoriaAberta === cat ? "rotate-180" : ""
-                    }`}
-                  >
-                    ▼
-                  </span>
-                </button>
-
-                {categoriaAberta === cat && (
-                  <div className="px-4 pb-4 space-y-2">
-                    {items.map((p) => (
-                      <button
-                        key={p.id}
-                        onClick={() => adicionarItem(p)}
-                        className="w-full bg-orange-500/90 hover:bg-orange-500 active:scale-[0.98] transition-all text-black font-semibold py-3 rounded-xl flex justify-between px-4 text-sm"
-                      >
-                        <span>{p.nome}</span>
-                        <span>{moeda(p.preco)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Lista de mesas
-  const mesasOcupadas = mesas.filter((m) => m.status === "ocupada").length;
+export default function Garcom({ navegar }) {
+  const { mesas, marcarEntregue, usuario } = useRestaurante();
+  const [filtro, setFiltro] = useState("todas");
+  const ocupadas = mesas.filter(mesaOcupada).length;
+  const prontos = comandasNaCozinha(mesas, "pronto");
+  const ehMinha = (m) => m.atendente?.id === usuario.id;
+  const minhas = mesas.filter(ehMinha).length;
+  const filtros = [
+    { id: "todas", label: `Todas (${mesas.length})`, ok: () => true },
+    { id: "livres", label: `Livres (${mesas.length - ocupadas})`, ok: (m) => !mesaOcupada(m) },
+    { id: "minhas", label: `Minhas (${minhas})`, ok: ehMinha },
+  ];
+  const visiveis = mesas.filter(filtros.find((f) => f.id === filtro).ok);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white p-4">
-      <div className="max-w-lg mx-auto space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-orange-500">Mesas</h1>
-            <p className="text-sm text-zinc-400">
-              {mesasOcupadas} ocupada{mesasOcupadas !== 1 ? "s" : ""} de{" "}
-              {mesas.length}
-            </p>
-          </div>
-          <button
-            onClick={voltarHome}
-            className="bg-zinc-800 hover:bg-zinc-700 active:scale-95 transition-all px-4 py-2 rounded-xl text-sm"
-          >
-            ← Início
-          </button>
-        </div>
+    <Pagina largura="max-w-3xl">
+      <Cabecalho
+        titulo="Mesas"
+        subtitulo={`${ocupadas} ocupada${ocupadas !== 1 ? "s" : ""} de ${mesas.length}`}
+      />
 
-        <div className="grid grid-cols-2 gap-3">
-          {mesas.map((m) => {
-            const pronta = m.concluidoCozinha && m.pedidos.length > 0;
-            return (
-              <button
-                key={m.id}
-                onClick={() => abrirMesa(m.id)}
-                className={`relative p-4 rounded-2xl text-left transition-all active:scale-[0.97] shadow border ${
-                  m.status === "ocupada"
-                    ? "bg-orange-500/10 border-orange-500/30 hover:border-orange-500/60"
-                    : "bg-zinc-900/80 border-zinc-800 hover:border-zinc-700"
-                }`}
+      {prontos.length > 0 && (
+        <Cartao className="border-green-500/40 bg-green-500/5 space-y-2">
+          <h2 className="font-bold text-green-400 text-sm">🔔 Prontos para servir</h2>
+          {prontos.map((c) => (
+            <div key={c.id} className="flex items-center justify-between gap-3">
+              <p className="text-sm min-w-0 truncate">
+                <span className="font-bold">Mesa {c.mesaNumero}</span>
+                <span className="text-zinc-400">
+                  {" "}· {c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ")}
+                </span>
+              </p>
+              <Botao
+                variante="sucesso"
+                className="px-3 py-1.5 text-xs shrink-0"
+                onClick={() => marcarEntregue(c.mesaId, c.id)}
+                title={c.atendente ? `Pedido de ${c.atendente.nome}` : undefined}
               >
-                {pronta && (
-                  <span className="absolute top-2 right-2 w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-                )}
-                {m.enviadoCozinha && !m.concluidoCozinha && m.pedidos.length > 0 && (
-                  <span className="absolute top-2 right-2 w-3 h-3 bg-yellow-500 rounded-full animate-pulse" />
-                )}
-                <p className="font-bold text-lg">Mesa {m.numero}</p>
-                <p className="text-xs text-zinc-400 capitalize">{m.status}</p>
-                {m.status === "ocupada" && (
-                  <p className="text-orange-500 font-bold text-sm mt-1">
-                    {moeda(m.total)}
-                  </p>
-                )}
-              </button>
-            );
-          })}
-        </div>
+                Servido
+              </Botao>
+            </div>
+          ))}
+        </Cartao>
+      )}
+
+      <div className="flex gap-2">
+        {filtros.map((f) => (
+          <button
+            type="button"
+            key={f.id}
+            onClick={() => setFiltro(f.id)}
+            aria-pressed={filtro === f.id}
+            className={`px-3 py-1.5 rounded-full text-sm font-semibold transition ${
+              filtro === f.id ? "bg-orange-500 text-black" : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+            }`}
+          >
+            {f.label}
+          </button>
+        ))}
       </div>
-    </div>
+
+      {visiveis.length === 0 && (
+        <p className="text-sm text-zinc-500">
+          {filtro === "minhas" ? "Você ainda não abriu nenhuma mesa." : "Nenhuma mesa livre no momento."}
+        </p>
+      )}
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+        {visiveis.map((m) => {
+          const status = statusMesa(m);
+          const { card, etiqueta } = estilos[status];
+          const itensRascunho = m.rascunho.reduce((a, i) => a + i.qtd, 0);
+          return (
+            <button
+              type="button"
+              key={m.id}
+              onClick={() => navegar("garcom", m.id)}
+              className={`p-4 rounded-2xl text-left transition-all active:scale-[0.97] shadow border min-h-28 flex flex-col focus-visible:outline-2 focus-visible:outline-orange-500 ${card}`}
+            >
+              <span className="font-bold text-lg flex items-center justify-between gap-1">
+                Mesa {m.numero}
+                {m.atendente && (
+                  <span
+                    className={`text-[10px] font-semibold px-1.5 py-0.5 rounded truncate max-w-20 ${
+                      ehMinha(m) ? "bg-orange-500 text-black" : "bg-zinc-800 text-zinc-400"
+                    }`}
+                    title={`Atendida por ${m.atendente.nome}`}
+                  >
+                    {ehMinha(m) ? "Sua" : m.atendente.nome.split(" ")[0]}
+                  </span>
+                )}
+              </span>
+              <span className="text-xs text-zinc-400">
+                {status === "livre" ? "Livre" : etiqueta}
+              </span>
+              {status !== "livre" && (
+                <span className="mt-auto pt-2 text-sm">
+                  <span className="text-orange-500 font-bold">{moeda(totalMesa(m))}</span>
+                  {itensRascunho > 0 && (
+                    <span className="block text-[11px] text-zinc-400">
+                      {plural(itensRascunho, "item", "itens")} não enviado{itensRascunho > 1 ? "s" : ""}
+                    </span>
+                  )}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </Pagina>
   );
 }

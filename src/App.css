@@ -4,8 +4,23 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-#root > div {
-  animation: fadeIn 0.3s ease-out;
+@keyframes tremer {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-8px); }
+  40%, 80% { transform: translateX(8px); }
+}
+
+@keyframes aviso {
+  from { opacity: 0; transform: translateY(-12px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.animate-entrada { animation: fadeIn 0.25s ease-out; }
+.animate-tremer { animation: tremer 0.35s ease-in-out; }
+.animate-aviso { animation: aviso 0.2s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-entrada, .animate-tremer, .animate-aviso { animation: none; }
 }
 
 /* Scrollbar */
