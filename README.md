@@ -30,7 +30,8 @@ Cada pessoa entra escolhendo seu nome e digitando um **PIN de 4 números**.
 
 O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada uma com seu usuário.
 
-> ⚠️ Os PINs ficam no navegador (com hash). Serve para uso acadêmico/demonstração; num sistema real a autenticação precisa ficar num servidor.
+> No **modo local** (sem banco configurado) os PINs ficam no navegador, o que serve só para demonstração.
+> Com o **banco de dados** ligado, o PIN é conferido no servidor e guardado com bcrypt.
 
 ## Funcionalidades
 
@@ -52,10 +53,81 @@ O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada
 - Pagamento em dinheiro com cálculo de troco
 - Histórico com total do dia, ticket médio e total por forma de pagamento; fechamento de caixa
 
+## Banco de dados (Supabase / PostgreSQL)
+
+O sistema funciona em dois modos:
+
+| Modo | Quando | Onde ficam os dados |
+|---|---|---|
+| ☁️ **Nuvem** | `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` configuradas | PostgreSQL no Supabase — todos os aparelhos veem os mesmos dados em tempo real |
+| 💾 **Local** | sem configuração | `localStorage` do navegador |
+
+### Modelo de dados
+
+```mermaid
+erDiagram
+    funcionarios ||--o{ sessoes : "faz login"
+    funcionarios ||--o{ mesas : "atende"
+    funcionarios ||--o{ comandas : "envia"
+    funcionarios ||--o{ vendas : "fecha"
+    categorias ||--o{ produtos : "agrupa"
+    mesas ||--o{ rascunho_itens : "tem"
+    produtos ||--o{ rascunho_itens : ""
+    mesas ||--o{ comandas : "pede"
+    comandas ||--|{ comanda_itens : "contém"
+    produtos ||--o{ comanda_itens : ""
+    vendas ||--o{ comandas : "paga"
+    mesas ||--o{ vendas : ""
+    fechamentos_caixa ||--o{ vendas : "agrupa"
+
+    funcionarios { uuid id PK
+      text nome
+      text funcao "admin | garcom | cozinha | caixa"
+      text pin_hash "bcrypt"
+      bool ativo }
+    sessoes { uuid token PK
+      uuid funcionario_id FK
+      timestamptz expira_em }
+    mesas { int numero PK
+      timestamptz aberta_em
+      uuid atendente_id FK }
+    comandas { uuid id PK
+      int mesa_numero FK
+      text status "preparo | pronto | entregue"
+      uuid venda_id FK "null = conta aberta" }
+    comanda_itens { int id PK
+      uuid comanda_id FK
+      int produto_id FK
+      numeric preco
+      int qtd }
+    vendas { uuid id PK
+      numeric total
+      text forma_pagamento
+      uuid fechamento_id FK }
+```
+
+**Segurança:** todas as tabelas têm RLS ligado e nenhum acesso direto. O site só chama
+**funções no banco** (`entrar`, `estado`, `adicionar_item`, `enviar_cozinha`, `finalizar_conta`, …),
+e cada função confere o token da sessão e a função do funcionário — um garçom não consegue,
+por exemplo, fechar conta nem cadastrar funcionário, mesmo chamando a API na mão.
+Tudo está em [`supabase/schema.sql`](supabase/schema.sql).
+
+### Como configurar
+
+1. Crie uma conta e um projeto grátis em [supabase.com](https://supabase.com).
+2. No projeto, abra **SQL Editor → New query**, cole todo o conteúdo de `supabase/schema.sql` e clique em **Run**.
+   ⚠️ Rodar de novo apaga e recria as tabelas.
+3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
+4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.
+5. Para o site do GitHub Pages: no repositório, **Settings → Secrets and variables → Actions → Variables**,
+   crie `SUPABASE_URL` e `SUPABASE_ANON_KEY` e rode o deploy de novo (ou faça um push).
+
+A chave *publishable/anon* é feita para ficar no navegador; quem protege os dados são as regras do banco.
+
 ## Detalhes técnicos
 
-- Os dados ficam salvos no `localStorage` — recarregar a página não perde nada.
-- Abas abertas no mesmo navegador são sincronizadas: deixe a Cozinha numa aba e o Garçom em outra.
+- Com banco: as telas se atualizam em tempo real (Supabase Realtime) e conferem o banco a cada 10 s; as ações aparecem na hora na tela e são confirmadas pelo banco em seguida.
+- Sem banco: os dados ficam no `localStorage` e abas do mesmo navegador são sincronizadas.
 - Navegação pela URL (`#/garcom/3`, `#/cozinha`, `#/caixa/historico`), então o botão voltar do navegador funciona.
 
 ## Estrutura
@@ -64,7 +136,9 @@ O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada
 src/
   App.jsx                    rotas
   store/regras.js            regras de negócio (reducer e cálculos, sem React)
-  store/RestauranteProvider  estado global + persistência + sincronização entre abas
+  store/RestauranteProvider  estado global (modo local ou nuvem)
+  store/supabase.js          conexão com o banco e tradução das ações em funções SQL
+supabase/schema.sql          tabelas, segurança e funções do banco
   pages/                     Login, Painel, Equipe, Garcom, Mesa, Cozinha, Caixa, Conta, Historico
   components/ui.jsx          componentes visuais reutilizáveis
   data/cardapio.js           produtos e categorias

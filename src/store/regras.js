@@ -1,6 +1,7 @@
 // Regras de negócio puras (sem React): estado inicial, reducer e seletores.
 
 import { hashPin, PIN_PADRAO_ADMIN } from "../utils/pin.js";
+import { produtos as produtosLocais, categoriaLabels } from "../data/cardapio.js";
 
 export const NUM_MESAS = 10;
 export const TAXA_SERVICO = 0.1;
@@ -93,6 +94,13 @@ export function totalAdminsAtivos(funcionarios) {
   return funcionarios.filter((f) => f.funcao === "admin" && f.ativo).length;
 }
 
+/** Cardápio no mesmo formato que o banco devolve: [{ id, nome, produtos: [...] }] */
+export const CARDAPIO_LOCAL = Object.entries(produtosLocais).map(([id, produtos]) => ({
+  id,
+  nome: categoriaLabels[id],
+  produtos,
+}));
+
 // ---------- seletores ----------
 
 const centavos = (v) => Math.round(v * 100) / 100;
@@ -155,6 +163,7 @@ function atualizarMesa(state, mesaId, fn) {
 }
 
 export function reducer(state, action) {
+  if (!state && action.type !== "SINCRONIZAR") return state;
   switch (action.type) {
     case "SINCRONIZAR":
       return action.state;

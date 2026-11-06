@@ -11,7 +11,7 @@ const ABAS = [
 ];
 
 export default function Layout({ areaAtual, navegar, children }) {
-  const { usuario, sair, mesas } = useRestaurante();
+  const { usuario, sair, mesas, modo, conexao } = useRestaurante();
   const abas = ABAS.filter((a) => podeAcessar(usuario, a.area));
   const contadores = {
     garcom: comandasNaCozinha(mesas, "pronto").length,
@@ -59,6 +59,12 @@ export default function Layout({ areaAtual, navegar, children }) {
           )}
 
           <div className="flex items-center gap-2 shrink-0">
+            {modo === "nuvem" && (
+              <span
+                title={conexao === "online" ? "Conectado ao banco de dados" : "Sem conexão — tentando novamente"}
+                className={`w-2.5 h-2.5 rounded-full ${conexao === "online" ? "bg-green-500" : "bg-red-500 animate-pulse"}`}
+              />
+            )}
             <Avatar funcionario={usuario} tamanho="p" />
             <div className="hidden md:block leading-tight">
               <p className="text-sm font-semibold max-w-32 truncate">{usuario.nome}</p>
@@ -75,6 +81,12 @@ export default function Layout({ areaAtual, navegar, children }) {
           </div>
         </div>
       </header>
+
+      {modo === "nuvem" && conexao === "offline" && (
+        <div className="bg-red-600 text-white text-sm text-center py-1.5 px-4">
+          Sem conexão com o banco de dados. As alterações podem não ser salvas — tentando reconectar…
+        </div>
+      )}
 
       {children}
     </div>

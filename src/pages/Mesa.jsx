@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { produtos, categoriaLabels } from "../data/cardapio";
 import { useAviso, useRestaurante } from "../store/contexto";
 import { contarItens, itensConsumidos, somaItens, totalMesa } from "../store/regras";
 import { hora, moeda, plural, tempoDecorrido } from "../utils/format";
@@ -30,6 +29,7 @@ const statusComanda = {
 export default function Mesa({ mesaId, navegar }) {
   const {
     mesas,
+    cardapio,
     adicionarItem,
     removerItem,
     limparRascunho,
@@ -47,11 +47,11 @@ export default function Mesa({ mesaId, navegar }) {
 
   const cardapioFiltrado = useMemo(() => {
     const termo = normalizar(busca.trim());
-    return Object.entries(produtos)
-      .filter(([cat]) => termo || categoria === TODAS || cat === categoria)
-      .map(([cat, itens]) => [cat, itens.filter((p) => !termo || normalizar(p.nome).includes(termo))])
-      .filter(([, itens]) => itens.length > 0);
-  }, [busca, categoria]);
+    return cardapio
+      .filter((cat) => termo || categoria === TODAS || cat.id === categoria)
+      .map((cat) => ({ ...cat, produtos: cat.produtos.filter((p) => !termo || normalizar(p.nome).includes(termo)) }))
+      .filter((cat) => cat.produtos.length > 0);
+  }, [busca, categoria, cardapio]);
 
   if (!mesa) {
     return (
@@ -250,19 +250,19 @@ export default function Mesa({ mesaId, navegar }) {
         />
         {!busca && (
           <div className="flex gap-2 overflow-x-auto pb-1 -mx-4 px-4 [scrollbar-width:none]">
-            {[TODAS, ...Object.keys(produtos)].map((cat) => (
+            {[{ id: TODAS, nome: "Todos" }, ...cardapio].map((cat) => (
               <button
                 type="button"
-                key={cat}
-                onClick={() => setCategoria(cat)}
-                aria-pressed={categoria === cat}
+                key={cat.id}
+                onClick={() => setCategoria(cat.id)}
+                aria-pressed={categoria === cat.id}
                 className={`shrink-0 px-3 py-1.5 rounded-full text-sm font-semibold transition ${
-                  categoria === cat
+                  categoria === cat.id
                     ? "bg-orange-500 text-black"
                     : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
                 }`}
               >
-                {cat === TODAS ? "Todos" : categoriaLabels[cat]}
+                {cat.nome}
               </button>
             ))}
           </div>
@@ -272,11 +272,11 @@ export default function Mesa({ mesaId, navegar }) {
           <p className="text-zinc-500 text-sm">Nenhum item encontrado para “{busca}”.</p>
         )}
 
-        {cardapioFiltrado.map(([cat, itens]) => (
-          <div key={cat}>
-            <h3 className="text-orange-500 font-bold text-sm mb-2">{categoriaLabels[cat]}</h3>
+        {cardapioFiltrado.map((cat) => (
+          <div key={cat.id}>
+            <h3 className="text-orange-500 font-bold text-sm mb-2">{cat.nome}</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {itens.map((p) => (
+              {cat.produtos.map((p) => (
                 <button
                   type="button"
                   key={p.id}

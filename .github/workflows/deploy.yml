@@ -24,6 +24,11 @@ jobs:
           node-version: 22
       - run: npm install
       - run: npm run build
+        env:
+          # Configuradas em Settings → Secrets and variables → Actions → Variables.
+          # Sem elas, o site é publicado em "modo local" (dados só no navegador).
+          VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

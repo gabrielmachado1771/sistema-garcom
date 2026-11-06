@@ -26,34 +26,47 @@ function TecladoPin({ funcionario, onVoltar, onEntrar }) {
     return () => clearInterval(id);
   }, [bloqueadoAte]);
 
+  const [verificando, setVerificando] = useState(false);
+
+  const bloquear = useCallback((segundos) => {
+    setBloqueadoAte(Date.now() + segundos * 1000);
+    setAgora(Date.now());
+    setTentativas(0);
+    setErro(`Muitas tentativas. Aguarde ${segundos}s.`);
+  }, []);
+
   const tentar = useCallback(
-    (valor) => {
-      if (onEntrar(valor)) return;
-      const n = tentativas + 1;
-      setTentativas(n);
-      setTremendo((t) => t + 1);
+    async (valor) => {
+      setVerificando(true);
+      const r = await onEntrar(valor);
+      if (r.ok) return; // a tela troca sozinha
+      setVerificando(false);
       setPin("");
-      if (n >= MAX_TENTATIVAS) {
-        setBloqueadoAte(Date.now() + BLOQUEIO_SEG * 1000);
-        setAgora(Date.now());
-        setTentativas(0);
-        setErro(`Muitas tentativas. Aguarde ${BLOQUEIO_SEG}s.`);
-      } else {
-        setErro(`PIN incorreto (${MAX_TENTATIVAS - n} tentativa${MAX_TENTATIVAS - n > 1 ? "s" : ""} restante${MAX_TENTATIVAS - n > 1 ? "s" : ""})`);
-      }
+      setTremendo((t) => t + 1);
+
+      if (r.erro === "BLOQUEADO") return bloquear(r.segundos ?? BLOQUEIO_SEG);
+      if (r.erro === "SEM_CONEXAO") return setErro("Sem conexão com o servidor.");
+      if (r.erro !== "PIN_INCORRETO") return setErro("Não foi possível entrar. Tente de novo.");
+
+      // O servidor informa quantas tentativas restam; no modo local contamos aqui.
+      const n = tentativas + 1;
+      const restantes = r.restantes ?? MAX_TENTATIVAS - n;
+      setTentativas(n);
+      if (restantes <= 0) return bloquear(BLOQUEIO_SEG);
+      setErro(`PIN incorreto (${restantes} tentativa${restantes > 1 ? "s" : ""} restante${restantes > 1 ? "s" : ""})`);
     },
-    [onEntrar, tentativas]
+    [onEntrar, tentativas, bloquear]
   );
 
   const tecla = useCallback(
     (t) => {
-      if (bloqueado) return;
+      if (bloqueado || verificando) return;
       if (t === "apagar") return setPin((p) => p.slice(0, -1));
       if (t === "limpar") return setPin("");
       setErro("");
       setPin((p) => (p.length >= PIN_TAMANHO ? p : p + t));
     },
-    [bloqueado]
+    [bloqueado, verificando]
   );
 
   // Ao completar os dígitos, tenta entrar automaticamente.
@@ -96,7 +109,7 @@ function TecladoPin({ funcionario, onVoltar, onEntrar }) {
         ))}
       </div>
       <p className="h-5 text-sm text-red-400 mb-3" role="alert">
-        {bloqueado ? `Bloqueado. Tente em ${segundosRestantes}s.` : erro}
+        {bloqueado ? `Bloqueado. Tente em ${segundosRestantes}s.` : verificando ? "Verificando…" : erro}
       </p>
 
       <div className="grid grid-cols-3 gap-3 max-w-64 mx-auto">
@@ -122,9 +135,9 @@ function TecladoPin({ funcionario, onVoltar, onEntrar }) {
 }
 
 export default function Login() {
-  const { funcionarios, entrar } = useRestaurante();
+  const { funcionariosLogin, entrar, modo, conexao, recarregarLogin } = useRestaurante();
   const [selecionadoId, setSelecionadoId] = useState(null);
-  const ativos = funcionarios.filter((f) => f.ativo);
+  const ativos = funcionariosLogin;
   const selecionado = ativos.find((f) => f.id === selecionadoId);
   const adminComPinPadrao = ativos.find((f) => f.funcao === "admin" && f.pinPadrao);
 
@@ -149,6 +162,9 @@ export default function Login() {
               </div>
               <h1 className="text-2xl font-bold text-orange-500">Sistema Restaurante</h1>
               <p className="text-zinc-400 text-sm">Quem está entrando?</p>
+              <p className="text-[11px] text-zinc-600 mt-1">
+                {modo === "nuvem" ? "☁️ Conectado ao banco de dados" : "💾 Modo local (dados só neste navegador)"}
+              </p>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -167,6 +183,21 @@ export default function Login() {
                 </button>
               ))}
             </div>
+
+            {ativos.length === 0 && (
+              <div className="text-center text-sm text-zinc-400 space-y-3">
+                <p>
+                  {conexao === "offline"
+                    ? "Não foi possível conectar ao banco de dados."
+                    : "Nenhum funcionário encontrado."}
+                </p>
+                {recarregarLogin && (
+                  <button type="button" onClick={recarregarLogin} className="text-orange-400 underline">
+                    Tentar de novo
+                  </button>
+                )}
+              </div>
+            )}
 
             {adminComPinPadrao && (
               <p className="mt-6 text-xs text-zinc-400 bg-zinc-800/60 rounded-xl p-3 text-center">

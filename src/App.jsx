@@ -34,7 +34,7 @@ function Pagina({ area, param, navegar }) {
 }
 
 function Rotas() {
-  const { usuario } = useRestaurante();
+  const { usuario, carregando } = useRestaurante();
   const [[tela, param], navegar] = useHashRoute();
   const area = tela || "painel";
   const permitido = podeAcessar(usuario, area);
@@ -47,6 +47,14 @@ function Rotas() {
     }
   }, [usuario, permitido, navegar]);
 
+  if (carregando) {
+    return (
+      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center gap-3 text-zinc-400">
+        <span className="w-10 h-10 border-4 border-zinc-700 border-t-orange-500 rounded-full animate-spin" />
+        <p className="text-sm">Conectando ao banco de dados…</p>
+      </div>
+    );
+  }
   if (!usuario) return <Login />;
   if (!permitido) return null;
 
