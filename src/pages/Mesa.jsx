@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useAviso, useRestaurante } from "../store/contexto";
-import { contarItens, itensConsumidos, somaItens, totalMesa } from "../store/regras";
+import { contarItens, itensConsumidos, mesaOcupada, somaItens, totalMesa } from "../store/regras";
 import { hora, moeda, plural, tempoDecorrido } from "../utils/format";
 import useAgora from "../hooks/useAgora";
 import {
@@ -10,14 +10,115 @@ import {
   Cartao,
   Etiqueta,
   ListaItens,
+  Modal,
   Pagina,
   TituloSecao,
 } from "../components/ui";
+import { classeInput } from "../utils/estilos";
 
 const TODAS = "TODAS";
 
 function normalizar(texto) {
   return texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+}
+
+const SUGESTOES_OBS = ["Sem cebola", "Sem gelo", "Bem passada", "Ao ponto", "Mal passada", "Sem salada", "Para viagem"];
+
+/** Janela para escrever a observação de um item (ex.: 1 dos 3 hambúrgueres "sem cebola"). */
+function ModalObservacao({ item, onSalvar, onFechar }) {
+  const [texto, setTexto] = useState(item.obs ?? "");
+  const [qtd, setQtd] = useState(item.obs ? item.qtd : 1);
+  const salvar = (e) => {
+    e.preventDefault();
+    onSalvar(texto, qtd);
+  };
+  return (
+    <Modal aberto titulo={`Observação — ${item.nome}`} onFechar={onFechar}>
+      <form onSubmit={salvar} className="space-y-4">
+        <input
+          autoFocus
+          maxLength={100}
+          value={texto}
+          onChange={(e) => setTexto(e.target.value)}
+          placeholder="Ex.: sem cebola, bem passada…"
+          className={classeInput}
+        />
+        <div className="flex flex-wrap gap-2">
+          {SUGESTOES_OBS.map((s) => (
+            <button
+              type="button"
+              key={s}
+              onClick={() => setTexto((t) => (t.trim() ? `${t.trim()}, ${s.toLowerCase()}` : s))}
+              className="px-3 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-xs"
+            >
+              + {s}
+            </button>
+          ))}
+        </div>
+        {item.qtd > 1 && (
+          <div className="flex items-center justify-between gap-3 bg-zinc-800/60 rounded-xl p-3">
+            <span className="text-sm text-zinc-300">Vale para quantos?</span>
+            <div className="flex items-center gap-2">
+              <Botao className="w-9 h-9" aria-label="Menos um" disabled={qtd <= 1} onClick={() => setQtd(qtd - 1)}>
+                −
+              </Botao>
+              <span className="w-14 text-center text-sm font-semibold tabular-nums">
+                {qtd} de {item.qtd}
+              </span>
+              <Botao className="w-9 h-9" aria-label="Mais um" disabled={qtd >= item.qtd} onClick={() => setQtd(qtd + 1)}>
+                +
+              </Botao>
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2">
+          {item.obs && (
+            <Botao variante="fantasma" className="px-4 py-3 text-sm" onClick={() => onSalvar("", qtd)}>
+              Tirar observação
+            </Botao>
+          )}
+          <Botao type="submit" variante="primario" className="flex-1 py-3">
+            Salvar
+          </Botao>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+/** Escolher para qual mesa levar a conta. Mesa livre = mover; mesa ocupada = juntar. */
+function ModalTransferir({ mesa, mesas, onEscolher, onFechar }) {
+  const outras = mesas.filter((m) => m.id !== mesa.id);
+  return (
+    <Modal aberto titulo={`Trocar a mesa ${mesa.numero} de lugar`} onFechar={onFechar}>
+      <p className="text-sm text-zinc-400 mb-4">
+        Escolha uma mesa <strong className="text-zinc-200">livre</strong> para mudar o cliente de lugar, ou uma mesa{" "}
+        <strong className="text-orange-400">ocupada</strong> para juntar as duas contas.
+      </p>
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+        {outras.map((m) => {
+          const ocupada = mesaOcupada(m);
+          return (
+            <button
+              type="button"
+              key={m.id}
+              onClick={() => onEscolher(m)}
+              className={`rounded-xl py-3 px-2 text-sm font-semibold border transition active:scale-95 ${
+                ocupada
+                  ? "bg-orange-500/10 border-orange-500/40 hover:border-orange-500 text-orange-300"
+                  : "bg-zinc-800 border-zinc-700 hover:border-zinc-500"
+              }`}
+            >
+              Mesa {m.numero}
+              <span className="block text-[11px] font-normal text-zinc-400">
+                {ocupada ? `juntar · ${moeda(totalMesa(m))}` : "livre"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
+  );
 }
 
 const statusComanda = {
@@ -37,11 +138,15 @@ export default function Mesa({ mesaId, navegar }) {
     enviarCozinha,
     marcarEntregue,
     cancelarComanda,
+    observacaoItem,
+    transferirMesa,
   } = useRestaurante();
   const agora = useAgora();
   const aviso = useAviso();
   const [categoria, setCategoria] = useState(TODAS);
   const [busca, setBusca] = useState("");
+  const [itemObs, setItemObs] = useState(null); // linha do pedido com a janela de observação aberta
+  const [transferindo, setTransferindo] = useState(false);
 
   const mesa = mesas.find((m) => m.id === mesaId);
 
@@ -64,7 +169,20 @@ export default function Mesa({ mesaId, navegar }) {
   }
 
   const consumidos = itensConsumidos(mesa);
-  const qtdNoRascunho = Object.fromEntries(mesa.rascunho.map((i) => [i.produtoId, i.qtd]));
+  const qtdNoRascunho = {};
+  for (const i of mesa.rascunho) qtdNoRascunho[i.produtoId] = (qtdNoRascunho[i.produtoId] ?? 0) + i.qtd;
+
+  function transferirPara(destino) {
+    const juntar = mesaOcupada(destino);
+    const pergunta = juntar
+      ? `Juntar a conta da mesa ${mesa.numero} com a da mesa ${destino.numero}? Tudo vai ficar na mesa ${destino.numero}.`
+      : `Mudar o cliente da mesa ${mesa.numero} para a mesa ${destino.numero}?`;
+    if (!window.confirm(pergunta)) return;
+    transferirMesa(mesa.id, destino.id);
+    setTransferindo(false);
+    aviso(juntar ? `Mesas ${mesa.numero} e ${destino.numero} juntadas.` : `Conta levada para a mesa ${destino.numero}.`);
+    navegar("garcom", destino.id);
+  }
   const totalRascunho = somaItens(mesa.rascunho);
   const temRascunho = mesa.rascunho.length > 0;
 
@@ -80,8 +198,28 @@ export default function Mesa({ mesaId, navegar }) {
             : "Livre — adicione itens para abrir"
         }
       >
+        {mesaOcupada(mesa) && (
+          <Botao className="px-3 py-2 text-sm" onClick={() => setTransferindo(true)} title="Mudar de mesa ou juntar com outra">
+            ⇄ Trocar
+          </Botao>
+        )}
         <BotaoVoltar onClick={() => navegar("garcom")} />
       </Cabecalho>
+
+      {transferindo && (
+        <ModalTransferir mesa={mesa} mesas={mesas} onEscolher={transferirPara} onFechar={() => setTransferindo(false)} />
+      )}
+      {itemObs && (
+        <ModalObservacao
+          key={`${itemObs.produtoId}|${itemObs.obs}`}
+          item={itemObs}
+          onFechar={() => setItemObs(null)}
+          onSalvar={(texto, qtd) => {
+            observacaoItem(mesa.id, itemObs.produtoId, itemObs.obs ?? "", texto, qtd);
+            setItemObs(null);
+          }}
+        />
+      )}
 
       {/* Conta até agora */}
       <Cartao>
@@ -143,7 +281,7 @@ export default function Mesa({ mesaId, navegar }) {
                   {statusComanda[c.status]}
                 </div>
                 <p className="text-sm text-zinc-300">
-                  {c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ")}
+                  {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
                 </p>
                 {c.observacao && <p className="text-xs text-yellow-300 mt-1">Obs: {c.observacao}</p>}
                 {c.status === "pronto" && (
@@ -198,14 +336,24 @@ export default function Mesa({ mesaId, navegar }) {
               <>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{item.nome}</p>
+                  {item.obs && <p className="text-xs text-yellow-300 truncate">📝 {item.obs}</p>}
                   <p className="text-sm text-orange-400">{moeda(item.preco * item.qtd)}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <Botao
+                    variante="fantasma"
+                    className={`w-9 h-9 ${item.obs ? "text-yellow-300" : ""}`}
+                    aria-label={`Observação de ${item.nome}`}
+                    title="Observação deste item"
+                    onClick={() => setItemObs(item)}
+                  >
+                    📝
+                  </Botao>
+                  <Botao
                     variante="perigo"
                     className="w-9 h-9 text-lg"
                     aria-label={`Remover um ${item.nome}`}
-                    onClick={() => removerItem(mesa.id, item.produtoId)}
+                    onClick={() => removerItem(mesa.id, item.produtoId, item.obs ?? "")}
                   >
                     −
                   </Botao>
@@ -215,7 +363,7 @@ export default function Mesa({ mesaId, navegar }) {
                     className="w-9 h-9 text-lg"
                     aria-label={`Adicionar um ${item.nome}`}
                     onClick={() =>
-                      adicionarItem(mesa.id, { id: item.produtoId, nome: item.nome, preco: item.preco })
+                      adicionarItem(mesa.id, { id: item.produtoId, nome: item.nome, preco: item.preco }, item.obs ?? "")
                     }
                   >
                     +
@@ -227,7 +375,7 @@ export default function Mesa({ mesaId, navegar }) {
         )}
 
         <label className="block mt-4">
-          <span className="text-xs text-zinc-400">Observação para a cozinha</span>
+          <span className="text-xs text-zinc-400">Observação geral do pedido (para um item só, use o 📝)</span>
           <input
             type="text"
             placeholder="Ex.: sem cebola, carne bem passada…"

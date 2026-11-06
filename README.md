@@ -21,7 +21,7 @@ Cada pessoa entra escolhendo seu nome e digitando um **PIN de 4 números**.
 
 | Função | Acessa |
 |---|---|
-| 🛡️ Administrador | Tudo: painel, garçom, cozinha, caixa e equipe |
+| 🛡️ Administrador | Tudo: painel, garçom, cozinha, caixa, relatórios, cardápio e equipe |
 | 📝 Garçom | Só mesas e pedidos |
 | 👨‍🍳 Cozinha | Só a fila de pedidos |
 | 💰 Caixa | Só contas, pagamentos e histórico |
@@ -40,18 +40,33 @@ O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada
 - Aviso "Prontos para servir" com botão *Servido*
 - Cardápio com busca (ignora acentos) e filtro por categoria
 - Pedido montado em rascunho e enviado à cozinha em rodadas (comandas) — dá para pedir mais itens depois
-- Observação por pedido e cancelamento de pedido enquanto ainda está em preparo
+- Observação por item (ex.: 1 dos 3 hambúrgueres "sem cebola") e observação geral do pedido
+- Cancelamento de pedido enquanto ainda está em preparo
+- Trocar o cliente de mesa ou juntar duas mesas numa conta só
+- Aviso com som, vibração e notificação do celular quando o pedido **dele** fica pronto
 
 **Cozinha**
 - Fila de pedidos do mais antigo para o mais novo, com tempo decorrido
 - Destaque em vermelho para pedidos com mais de 20 minutos
-- Marcar como pronto / desfazer
+- Observações de cada item em destaque
+- Marcar como pronto / desfazer; aviso de pedido novo
 
 **Caixa**
 - Contas abertas e valor total em aberto
-- Taxa de serviço de 10% (opcional), divisão da conta por pessoas
-- Pagamento em dinheiro com cálculo de troco
-- Histórico com total do dia, ticket médio e total por forma de pagamento; fechamento de caixa
+- Taxa de serviço de 10% (opcional)
+- Divisão da conta em partes iguais **ou por itens** (cada um paga o que consumiu; o que é "da mesa" é dividido entre todos)
+- Pagamento em várias formas na mesma conta (ex.: R$ 20 dinheiro + R$ 5 débito + R$ 5 crédito), troco só do dinheiro
+- Histórico do caixa aberto e fechamento de caixa (as vendas vão para os relatórios)
+
+**Administrador**
+- Painel com a visão geral e a **quantidade de mesas** do restaurante
+- **Relatórios** por período: faturamento por dia/hora, formas de pagamento, produtos mais vendidos,
+  vendas por garçom, caixas fechados e planilha CSV
+- **Cardápio** editável: criar, editar preço, mover e remover produtos e categorias
+- **Equipe**: cadastrar funcionários e definir a função de cada um
+
+**Aplicativo no celular**
+- Dá para instalar o site como app (botão **📲 Instalar**; no iPhone: Safari → Compartilhar → *Adicionar à Tela de Início*)
 
 ## Banco de dados (Supabase / PostgreSQL)
 
@@ -128,6 +143,8 @@ Tudo está em [`supabase/schema.sql`](supabase/schema.sql).
 na ordem, pelo mesmo SQL Editor (elas não apagam dados):
 
 - [`supabase/migracao-01-pagamento-dividido.sql`](supabase/migracao-01-pagamento-dividido.sql): pagamento dividido em várias formas.
+- [`supabase/migracao-02-cardapio-mesas-relatorios.sql`](supabase/migracao-02-cardapio-mesas-relatorios.sql): observação por item, transferir mesas, quantidade de mesas, cardápio editável e relatórios.
+
 3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
 4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.
 5. Para o site do GitHub Pages: no repositório, **Settings → Secrets and variables → Actions → Variables**,

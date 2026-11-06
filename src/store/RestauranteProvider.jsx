@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { RestauranteContext, useAviso } from "./contexto";
-import { CARDAPIO_LOCAL, estadoInicial, migrar, reducer, verificarPin } from "./regras";
+import { estadoInicial, migrar, reducer, verificarPin } from "./regras";
 import { acaoParaRpc, ehErroDeRede, MODO, rpc, supabase, traduzirErro } from "./supabase";
 
 const CHAVE_DADOS = "sistema-garcom:dados";
@@ -32,9 +32,18 @@ function gravarSessao(chave, valor) {
 /** Ações disponíveis para as telas — iguais nos dois modos. */
 function criarAcoes(executar, assinatura) {
   return {
-    adicionarItem: (mesaId, produto) =>
-      executar({ type: "ADICIONAR_ITEM", mesaId, produto, atendente: assinatura }),
-    removerItem: (mesaId, produtoId) => executar({ type: "REMOVER_ITEM", mesaId, produtoId }),
+    adicionarItem: (mesaId, produto, obs = "") =>
+      executar({ type: "ADICIONAR_ITEM", mesaId, produto, obs, atendente: assinatura }),
+    removerItem: (mesaId, produtoId, obs = "") => executar({ type: "REMOVER_ITEM", mesaId, produtoId, obs }),
+    observacaoItem: (mesaId, produtoId, obsAntiga, obs, qtd) =>
+      executar({ type: "OBSERVACAO_ITEM", mesaId, produtoId, obsAntiga, obs, qtd }),
+    transferirMesa: (origemId, destinoId) => executar({ type: "TRANSFERIR_MESA", origemId, destinoId }),
+    definirMesas: (quantidade) => executar({ type: "DEFINIR_MESAS", quantidade }),
+    salvarCategoria: (dados) => executar({ type: "SALVAR_CATEGORIA", ...dados }),
+    removerCategoria: (id) => executar({ type: "REMOVER_CATEGORIA", id }),
+    moverCategoria: (id, direcao) => executar({ type: "MOVER_CATEGORIA", id, direcao }),
+    salvarProduto: (dados) => executar({ type: "SALVAR_PRODUTO", ...dados }),
+    removerProduto: (id) => executar({ type: "REMOVER_PRODUTO", id }),
     limparRascunho: (mesaId) => executar({ type: "LIMPAR_RASCUNHO", mesaId }),
     definirObservacao: (mesaId, observacao) =>
       executar({ type: "DEFINIR_OBSERVACAO", mesaId, observacao }),
@@ -45,7 +54,7 @@ function criarAcoes(executar, assinatura) {
     cancelarComanda: (mesaId, comandaId) => executar({ type: "CANCELAR_COMANDA", mesaId, comandaId }),
     finalizarConta: (mesaId, pagamento) =>
       executar({ type: "FINALIZAR_CONTA", mesaId, ...pagamento, operador: assinatura?.nome }),
-    fecharCaixa: () => executar({ type: "FECHAR_CAIXA" }),
+    fecharCaixa: () => executar({ type: "FECHAR_CAIXA", operador: assinatura?.nome }),
     criarFuncionario: (dados) => executar({ type: "CRIAR_FUNCIONARIO", ...dados }),
     editarFuncionario: (id, dados) => executar({ type: "EDITAR_FUNCIONARIO", id, dados }),
     removerFuncionario: (id) => executar({ type: "REMOVER_FUNCIONARIO", id }),
@@ -120,6 +129,17 @@ function ProviderLocal({ children }) {
   const acoes = useMemo(() => criarAcoes(dispatch, assinatura), [assinatura]);
   const funcionariosLogin = useMemo(() => state.funcionarios.filter((f) => f.ativo), [state.funcionarios]);
 
+  const buscarRelatorio = useCallback(
+    async (de, ate) => {
+      const entre = (t) => t >= de && t <= ate;
+      return {
+        vendas: [...state.historico, ...(state.arquivo ?? [])].filter((v) => entre(v.data)),
+        fechamentos: (state.fechamentos ?? []).filter((f) => entre(f.data)),
+      };
+    },
+    [state.historico, state.arquivo, state.fechamentos]
+  );
+
   const valor = useMemo(
     () => ({
       ...state,
@@ -127,13 +147,13 @@ function ProviderLocal({ children }) {
       modo: "local",
       conexao: "online",
       carregando: false,
-      cardapio: CARDAPIO_LOCAL,
       usuario,
       funcionariosLogin,
+      buscarRelatorio,
       entrar,
       sair,
     }),
-    [state, acoes, usuario, funcionariosLogin, entrar, sair]
+    [state, acoes, usuario, funcionariosLogin, buscarRelatorio, entrar, sair]
   );
 
   return <RestauranteContext.Provider value={valor}>{children}</RestauranteContext.Provider>;
@@ -162,7 +182,7 @@ function ProviderNuvem({ children }) {
   // Só aplica a resposta do banco quando não há outro envio no caminho,
   // para não "voltar no tempo" a tela enquanto a pessoa ainda está clicando.
   const aplicar = useCallback((dados) => {
-    if (dados && pendentes.current === 0) dispatch({ type: "SINCRONIZAR", state: { versao: 3, ...dados } });
+    if (dados && pendentes.current === 0) dispatch({ type: "SINCRONIZAR", state: { versao: 4, ...dados } });
   }, []);
 
   const tratarErro = useCallback(
@@ -306,6 +326,23 @@ function ProviderNuvem({ children }) {
     dispatch({ type: "SINCRONIZAR", state: null });
   }, []);
 
+  // Relatórios buscam direto no banco (incluem caixas já fechados).
+  const buscarRelatorio = useCallback(
+    async (de, ate) => {
+      try {
+        return await rpc("relatorio", {
+          p_token: tokenRef.current,
+          p_de: new Date(de).toISOString(),
+          p_ate: new Date(ate).toISOString(),
+        });
+      } catch (e) {
+        tratarErro(e);
+        throw e;
+      }
+    },
+    [tratarErro]
+  );
+
   const usuario = state?.funcionarios.find((f) => f.id === state.usuarioId) ?? null;
   const assinatura = useAssinatura(usuario);
   // criarAcoes só monta funções (handlers); nenhum ref é lido durante a renderização.
@@ -326,10 +363,11 @@ function ProviderNuvem({ children }) {
       usuario,
       funcionariosLogin: funcionariosLogin ?? [],
       recarregarLogin: carregarLogin,
+      buscarRelatorio,
       entrar,
       sair,
     }),
-    [state, acoes, conexao, token, usuario, funcionariosLogin, carregarLogin, entrar, sair]
+    [state, acoes, conexao, token, usuario, funcionariosLogin, carregarLogin, buscarRelatorio, entrar, sair]
   );
 
   return <RestauranteContext.Provider value={valor}>{children}</RestauranteContext.Provider>;

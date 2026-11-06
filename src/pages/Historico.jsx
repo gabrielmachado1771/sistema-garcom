@@ -14,9 +14,14 @@ export default function Historico({ navegar }) {
   const porForma = FORMAS_PAGAMENTO.map((f) => ({ ...f, valor: totais[f.id] })).filter((f) => f.valor > 0);
 
   function confirmarFechamento() {
-    if (window.confirm(`Fechar o caixa e apagar ${plural(historico.length, "venda")} (${moeda(total)})?`)) {
+    if (
+      window.confirm(
+        `Fechar o caixa com ${plural(historico.length, "venda")} (${moeda(total)})? ` +
+          "A lista desta tela zera, mas as vendas continuam guardadas nos Relatórios."
+      )
+    ) {
       fecharCaixa();
-      aviso("Caixa fechado. Histórico zerado.", { tipo: "info" });
+      aviso("Caixa fechado. As vendas foram para os relatórios.", { tipo: "info" });
     }
   }
 
@@ -98,7 +103,7 @@ export default function Historico({ navegar }) {
           </section>
 
           <Botao variante="perigo" className="w-full py-3" onClick={confirmarFechamento}>
-            Fechar caixa (zerar histórico)
+            Fechar caixa do dia
           </Botao>
         </>
       )}

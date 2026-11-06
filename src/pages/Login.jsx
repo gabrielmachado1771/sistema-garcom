@@ -3,6 +3,7 @@ import { useRestaurante } from "../store/contexto";
 import { FUNCOES } from "../store/regras";
 import { PIN_PADRAO_ADMIN, PIN_TAMANHO } from "../utils/pin";
 import { Avatar } from "../components/ui";
+import BotaoInstalar from "../components/BotaoInstalar";
 
 const MAX_TENTATIVAS = 5;
 const BLOQUEIO_SEG = 30;
@@ -165,6 +166,9 @@ export default function Login() {
               <p className="text-[11px] text-zinc-600 mt-1">
                 {modo === "nuvem" ? "☁️ Conectado ao banco de dados" : "💾 Modo local (dados só neste navegador)"}
               </p>
+              <div className="mt-3 flex justify-center">
+                <BotaoInstalar />
+              </div>
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">

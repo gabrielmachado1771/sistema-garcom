@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useRestaurante } from "../store/contexto";
+import AtivarAvisos from "../components/AtivarAvisos";
 import { comandasNaCozinha, mesaOcupada, statusMesa, totalMesa } from "../store/regras";
 import { moeda, plural } from "../utils/format";
 import { Botao, Cabecalho, Cartao, Etiqueta, Pagina } from "../components/ui";
@@ -41,6 +42,8 @@ export default function Garcom({ navegar }) {
         subtitulo={`${ocupadas} ocupada${ocupadas !== 1 ? "s" : ""} de ${mesas.length}`}
       />
 
+      <AtivarAvisos texto="Receba um aviso no celular quando a cozinha terminar os seus pedidos, mesmo com o app em segundo plano." />
+
       {prontos.length > 0 && (
         <Cartao className="border-green-500/40 bg-green-500/5 space-y-2">
           <h2 className="font-bold text-green-400 text-sm">🔔 Prontos para servir</h2>
@@ -49,7 +52,7 @@ export default function Garcom({ navegar }) {
               <p className="text-sm min-w-0 truncate">
                 <span className="font-bold">Mesa {c.mesaNumero}</span>
                 <span className="text-zinc-400">
-                  {" "}· {c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ")}
+                  {" "}· {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
                 </span>
               </p>
               <Botao

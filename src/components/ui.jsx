@@ -1,6 +1,6 @@
 // Componentes visuais reutilizados pelas telas.
 
-import { FUNCOES, iniciais } from "../store/regras";
+import { FUNCOES, chaveItem, iniciais } from "../store/regras";
 
 const tamanhosAvatar = { p: "w-8 h-8 text-xs", m: "w-12 h-12 text-base", g: "w-16 h-16 text-xl" };
 
@@ -112,7 +112,7 @@ export function ListaItens({ itens, render }) {
   return (
     <ul className="divide-y divide-zinc-800/60">
       {itens.map((item) => (
-        <li key={item.produtoId} className="py-2 flex items-center justify-between gap-3">
+        <li key={chaveItem(item)} className="py-2 flex items-center justify-between gap-3">
           {render(item)}
         </li>
       ))}

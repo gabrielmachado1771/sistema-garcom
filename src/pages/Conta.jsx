@@ -21,6 +21,7 @@ import {
   TituloSecao,
   Vazio,
 } from "../components/ui";
+import DivisaoConta from "../components/DivisaoConta";
 
 function Linha({ rotulo, valor, forte }) {
   return (
@@ -57,7 +58,6 @@ export default function Conta({ mesaId, navegar }) {
   const subtotal = totalMesa(mesa);
   const taxa = centavos(comTaxa ? subtotal * TAXA_SERVICO : 0);
   const total = centavos(subtotal + taxa);
-  const porPessoa = total / pessoas;
 
   const valorDe = (forma) => centavos(parseValor(valores[forma] ?? ""));
   const pagamentos = juntarPagamentos(FORMAS_PAGAMENTO.map((f) => ({ forma: f.id, valor: valorDe(f.id) })));
@@ -73,6 +73,15 @@ export default function Conta({ mesaId, navegar }) {
 
   function definirValor(forma, texto) {
     setValores((v) => ({ ...v, [forma]: texto }));
+    setConfirmando(false);
+  }
+
+  // Usado pela divisão da conta: soma (ou tira) a parte de uma pessoa numa forma de pagamento.
+  function somarNaForma(forma, delta) {
+    setValores((v) => {
+      const novo = centavos(parseValor(v[forma] ?? "") + delta);
+      return { ...v, [forma]: novo > 0.004 ? novo.toFixed(2).replace(".", ",") : "" };
+    });
     setConfirmando(false);
   }
 
@@ -162,23 +171,13 @@ export default function Conta({ mesaId, navegar }) {
         </div>
       </Cartao>
 
-      <Cartao className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-sm text-zinc-400">Dividir entre</p>
-          {pessoas > 1 && <p className="text-orange-400 font-bold">{moeda(porPessoa)} por pessoa</p>}
-        </div>
-        <div className="flex items-center gap-2">
-          <Botao className="w-9 h-9" aria-label="Menos uma pessoa" disabled={pessoas <= 1} onClick={() => setPessoas((p) => p - 1)}>
-            −
-          </Botao>
-          <span className="w-16 text-center font-semibold tabular-nums">
-            {pessoas} {pessoas === 1 ? "pessoa" : "pessoas"}
-          </span>
-          <Botao className="w-9 h-9" aria-label="Mais uma pessoa" onClick={() => setPessoas((p) => p + 1)}>
-            +
-          </Botao>
-        </div>
-      </Cartao>
+      <DivisaoConta
+        mesa={mesa}
+        pessoas={pessoas}
+        setPessoas={setPessoas}
+        comTaxa={comTaxa}
+        onLancar={somarNaForma}
+      />
 
       <Cartao>
         <TituloSecao

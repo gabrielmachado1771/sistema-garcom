@@ -1,12 +1,15 @@
 import { useRestaurante } from "../store/contexto";
 import { comandasNaCozinha, FUNCOES, podeAcessar } from "../store/regras";
 import { Avatar } from "./ui";
+import BotaoInstalar from "./BotaoInstalar";
 
 const ABAS = [
   { area: "painel", label: "Painel", icone: "📊" },
   { area: "garcom", label: "Garçom", icone: "📝" },
   { area: "cozinha", label: "Cozinha", icone: "👨‍🍳" },
   { area: "caixa", label: "Caixa", icone: "💰" },
+  { area: "relatorios", label: "Relatórios", icone: "📈" },
+  { area: "cardapio", label: "Cardápio", icone: "🍽️" },
   { area: "equipe", label: "Equipe", icone: "👥" },
 ];
 
@@ -59,13 +62,16 @@ export default function Layout({ areaAtual, navegar, children }) {
           )}
 
           <div className="flex items-center gap-2 shrink-0">
+            <BotaoInstalar compacto />
             {modo === "nuvem" && (
               <span
                 title={conexao === "online" ? "Conectado ao banco de dados" : "Sem conexão — tentando novamente"}
                 className={`w-2.5 h-2.5 rounded-full ${conexao === "online" ? "bg-green-500" : "bg-red-500 animate-pulse"}`}
               />
             )}
-            <Avatar funcionario={usuario} tamanho="p" />
+            <span className="hidden sm:flex">
+              <Avatar funcionario={usuario} tamanho="p" />
+            </span>
             <div className="hidden md:block leading-tight">
               <p className="text-sm font-semibold max-w-32 truncate">{usuario.nome}</p>
               <p className="text-[11px] text-zinc-500">{FUNCOES[usuario.funcao].label}</p>

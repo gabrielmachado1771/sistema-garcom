@@ -47,7 +47,8 @@ create table sessoes (
 create table categorias (
   id    text primary key,
   nome  text not null,
-  ordem int not null default 0
+  ordem int not null default 0,
+  ativa boolean not null default true -- false = apagada (some do cardápio, mas fica no histórico)
 );
 
 create table produtos (
@@ -62,16 +63,18 @@ create table mesas (
   numero       int primary key,
   aberta_em    timestamptz,
   atendente_id uuid references funcionarios (id) on delete set null,
-  observacao   text not null default ''
+  observacao   text not null default '',
+  ativa        boolean not null default true -- false = mesa desativada pelo admin
 );
 
 -- Itens que o garçom está lançando e ainda não enviou à cozinha.
 create table rascunho_itens (
   mesa_numero   int not null references mesas (numero) on delete cascade,
   produto_id    int not null references produtos (id),
+  obs           text not null default '', -- observação do item (ex.: "sem cebola")
   qtd           int not null check (qtd > 0),
   adicionado_em timestamptz not null default clock_timestamp(),
-  primary key (mesa_numero, produto_id)
+  primary key (mesa_numero, produto_id, obs)
 );
 
 create table fechamentos_caixa (
@@ -134,7 +137,8 @@ create table comanda_itens (
   produto_id int not null references produtos (id),
   nome       text not null,           -- cópia do nome/preço no momento do pedido
   preco      numeric(10, 2) not null,
-  qtd        int not null check (qtd > 0)
+  qtd        int not null check (qtd > 0),
+  obs        text not null default ''
 );
 
 -- ---------------------------------------------------------------------
@@ -239,7 +243,7 @@ end $$;
 create or replace function _checar_mesa(p_mesa int) returns void
 language plpgsql security definer set search_path = public as $$
 begin
-  if not exists (select 1 from mesas where numero = p_mesa) then
+  if not exists (select 1 from mesas where numero = p_mesa and ativa) then
     raise exception 'MESA_INVALIDA';
   end if;
 end $$;
@@ -262,8 +266,8 @@ language sql stable security definer set search_path = public as $$
     'observacao', m.observacao,
     'atendente', case when f.id is null then null else jsonb_build_object('id', f.id, 'nome', f.nome) end,
     'rascunho', coalesce((
-      select jsonb_agg(jsonb_build_object('produtoId', p.id, 'nome', p.nome, 'preco', p.preco, 'qtd', r.qtd)
-                       order by r.adicionado_em, p.id)
+      select jsonb_agg(jsonb_build_object('produtoId', p.id, 'nome', p.nome, 'preco', p.preco, 'qtd', r.qtd, 'obs', r.obs)
+                       order by r.adicionado_em, p.id, r.obs)
       from rascunho_itens r join produtos p on p.id = r.produto_id
       where r.mesa_numero = m.numero), '[]'::jsonb),
     'comandas', coalesce((
@@ -278,18 +282,21 @@ language sql stable security definer set search_path = public as $$
         'atendente', case when c.atendente_nome is null then null
                      else jsonb_build_object('id', c.atendente_id, 'nome', c.atendente_nome) end,
         'itens', coalesce((
-          select jsonb_agg(jsonb_build_object('produtoId', ci.produto_id, 'nome', ci.nome, 'preco', ci.preco, 'qtd', ci.qtd)
+          select jsonb_agg(jsonb_build_object('produtoId', ci.produto_id, 'nome', ci.nome, 'preco', ci.preco,
+                                              'qtd', ci.qtd, 'obs', ci.obs)
                            order by ci.id)
           from comanda_itens ci where ci.comanda_id = c.id), '[]'::jsonb)
       ) order by c.numero)
       from comandas c where c.mesa_numero = m.numero and c.venda_id is null), '[]'::jsonb)
   ) order by m.numero), '[]'::jsonb)
-  from mesas m left join funcionarios f on f.id = m.atendente_id;
+  from mesas m left join funcionarios f on f.id = m.atendente_id
+  where m.ativa;
 $$;
 
-create or replace function _json_historico() returns jsonb
+-- Uma venda no formato que o site usa.
+create or replace function _json_venda(v vendas) returns jsonb
 language sql stable security definer set search_path = public as $$
-  select coalesce(jsonb_agg(jsonb_build_object(
+  select jsonb_build_object(
     'id', v.id,
     'mesa', v.mesa_numero,
     'subtotal', v.subtotal,
@@ -315,7 +322,13 @@ language sql stable security definer set search_path = public as $$
         where c.venda_id = v.id
         group by ci.produto_id, ci.nome, ci.preco
       ) x), '[]'::jsonb)
-  ) order by v.fechada_em desc), '[]'::jsonb)
+  );
+$$;
+
+-- Vendas do caixa aberto (ainda não fechado).
+create or replace function _json_historico() returns jsonb
+language sql stable security definer set search_path = public as $$
+  select coalesce(jsonb_agg(_json_venda(v) order by v.fechada_em desc), '[]'::jsonb)
   from vendas v
   where v.fechamento_id is null;
 $$;
@@ -338,8 +351,9 @@ language sql stable security definer set search_path = public as $$
     'produtos', coalesce((
       select jsonb_agg(jsonb_build_object('id', p.id, 'nome', p.nome, 'preco', p.preco) order by p.id)
       from produtos p where p.categoria_id = c.id and p.ativo), '[]'::jsonb)
-  ) order by c.ordem), '[]'::jsonb)
-  from categorias c;
+  ) order by c.ordem, c.id), '[]'::jsonb)
+  from categorias c
+  where c.ativa;
 $$;
 
 create or replace function _validar_pin(p_pin text) returns void
@@ -418,7 +432,11 @@ end $$;
 
 -- ---------- Garçom ----------
 
-create or replace function adicionar_item(p_token uuid, p_mesa int, p_produto int) returns jsonb
+-- Versões antigas (sem observação por item).
+drop function if exists adicionar_item(uuid, int, int);
+drop function if exists remover_item(uuid, int, int);
+
+create or replace function adicionar_item(p_token uuid, p_mesa int, p_produto int, p_obs text default '') returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
@@ -429,21 +447,59 @@ begin
     raise exception 'PRODUTO_INVALIDO';
   end if;
 
-  insert into rascunho_itens (mesa_numero, produto_id, qtd) values (p_mesa, p_produto, 1)
-  on conflict (mesa_numero, produto_id) do update set qtd = rascunho_itens.qtd + 1;
+  insert into rascunho_itens (mesa_numero, produto_id, obs, qtd)
+  values (p_mesa, p_produto, left(trim(coalesce(p_obs, '')), 100), 1)
+  on conflict (mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + 1;
 
   update mesas set aberta_em = coalesce(aberta_em, now()), atendente_id = coalesce(atendente_id, u.id)
   where numero = p_mesa;
   return estado(p_token);
 end $$;
 
-create or replace function remover_item(p_token uuid, p_mesa int, p_produto int) returns jsonb
+create or replace function remover_item(p_token uuid, p_mesa int, p_produto int, p_obs text default '') returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_obs text := coalesce(p_obs, '');
 begin
   perform _sessao(p_token, array['garcom']);
-  delete from rascunho_itens where mesa_numero = p_mesa and produto_id = p_produto and qtd <= 1;
-  update rascunho_itens set qtd = qtd - 1 where mesa_numero = p_mesa and produto_id = p_produto;
+  delete from rascunho_itens
+  where mesa_numero = p_mesa and produto_id = p_produto and obs = v_obs and qtd <= 1;
+  update rascunho_itens set qtd = qtd - 1
+  where mesa_numero = p_mesa and produto_id = p_produto and obs = v_obs;
   perform _liberar_se_vazia(p_mesa);
+  return estado(p_token);
+end $$;
+
+-- Coloca observação em parte das unidades de um item (ex.: 1 dos 3 hambúrgueres "sem cebola").
+create or replace function observacao_item(
+  p_token uuid, p_mesa int, p_produto int, p_obs_antiga text, p_obs_nova text, p_qtd int
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_antiga text := coalesce(p_obs_antiga, '');
+  v_nova text := left(trim(coalesce(p_obs_nova, '')), 100);
+  v_atual int;
+  v_qtd int;
+begin
+  perform _sessao(p_token, array['garcom']);
+  select qtd into v_atual from rascunho_itens
+  where mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga
+  for update;
+  if v_atual is null or v_nova = v_antiga then
+    return estado(p_token);
+  end if;
+
+  v_qtd := least(greatest(coalesce(p_qtd, 1), 1), v_atual);
+  if v_qtd = v_atual then
+    delete from rascunho_itens where mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga;
+  else
+    update rascunho_itens set qtd = qtd - v_qtd
+    where mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga;
+  end if;
+
+  insert into rascunho_itens (mesa_numero, produto_id, obs, qtd)
+  values (p_mesa, p_produto, v_nova, v_qtd)
+  on conflict (mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + excluded.qtd;
   return estado(p_token);
 end $$;
 
@@ -491,11 +547,11 @@ begin
   )
   returning id into v_comanda;
 
-  insert into comanda_itens (comanda_id, produto_id, nome, preco, qtd)
-  select v_comanda, p.id, p.nome, p.preco, r.qtd
+  insert into comanda_itens (comanda_id, produto_id, nome, preco, qtd, obs)
+  select v_comanda, p.id, p.nome, p.preco, r.qtd, r.obs
   from rascunho_itens r join produtos p on p.id = r.produto_id
   where r.mesa_numero = p_mesa
-  order by r.adicionado_em, p.id;
+  order by r.adicionado_em, p.id, r.obs;
 
   delete from rascunho_itens where mesa_numero = p_mesa;
   update mesas set observacao = '', aberta_em = coalesce(aberta_em, now()),
@@ -516,6 +572,52 @@ begin
   if v_mesa is not null then
     perform _liberar_se_vazia(v_mesa);
   end if;
+  return estado(p_token);
+end $$;
+
+-- Leva a conta de uma mesa para outra. Se a outra já tiver conta, as duas viram uma só.
+create or replace function transferir_mesa(p_token uuid, p_origem int, p_destino int) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  o mesas;
+  d mesas;
+  v_base int;
+  v_juntou boolean;
+begin
+  perform _sessao(p_token, array['garcom', 'caixa']);
+  if p_origem is null or p_destino is null or p_origem = p_destino then
+    raise exception 'MESA_INVALIDA';
+  end if;
+  -- Trava as duas mesas sempre na mesma ordem (evita duas transferências se travarem).
+  perform 1 from mesas where numero in (p_origem, p_destino) order by numero for update;
+  select * into o from mesas where numero = p_origem and ativa;
+  select * into d from mesas where numero = p_destino and ativa;
+  if o.numero is null or d.numero is null then
+    raise exception 'MESA_INVALIDA';
+  end if;
+  if not exists (select 1 from rascunho_itens where mesa_numero = p_origem)
+     and not exists (select 1 from comandas where mesa_numero = p_origem and venda_id is null) then
+    raise exception 'MESA_VAZIA';
+  end if;
+
+  v_juntou := exists (select 1 from rascunho_itens where mesa_numero = p_destino)
+           or exists (select 1 from comandas where mesa_numero = p_destino and venda_id is null);
+  select coalesce(max(numero), 0) into v_base from comandas where mesa_numero = p_destino and venda_id is null;
+
+  update comandas set mesa_numero = p_destino, numero = numero + v_base
+  where mesa_numero = p_origem and venda_id is null;
+
+  insert into rascunho_itens (mesa_numero, produto_id, obs, qtd, adicionado_em)
+  select p_destino, produto_id, obs, qtd, adicionado_em from rascunho_itens where mesa_numero = p_origem
+  on conflict (mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + excluded.qtd;
+  delete from rascunho_itens where mesa_numero = p_origem;
+
+  update mesas set
+    aberta_em    = case when v_juntou then least(d.aberta_em, o.aberta_em) else o.aberta_em end,
+    atendente_id = coalesce(d.atendente_id, o.atendente_id),
+    observacao   = concat_ws(' · ', nullif(trim(d.observacao), ''), nullif(trim(o.observacao), ''))
+  where numero = p_destino;
+  update mesas set aberta_em = null, atendente_id = null, observacao = '' where numero = p_origem;
   return estado(p_token);
 end $$;
 
@@ -745,6 +847,149 @@ begin
   return estado(p_token);
 end $$;
 
+-- ---------- Administração: mesas e cardápio ----------
+
+-- Define quantas mesas o restaurante tem. Mesas a mais ficam desativadas (o histórico continua).
+create or replace function definir_mesas(p_token uuid, p_quantidade int) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _sessao(p_token, array['admin']);
+  if p_quantidade is null or p_quantidade < 1 or p_quantidade > 60 then
+    raise exception 'MESAS_INVALIDAS';
+  end if;
+  perform 1 from mesas order by numero for update;
+  if exists (
+    select 1 from mesas m
+    where m.numero > p_quantidade and m.ativa
+      and (exists (select 1 from rascunho_itens r where r.mesa_numero = m.numero)
+           or exists (select 1 from comandas c where c.mesa_numero = m.numero and c.venda_id is null))
+  ) then
+    raise exception 'MESA_OCUPADA';
+  end if;
+  insert into mesas (numero) select generate_series(1, p_quantidade) on conflict (numero) do nothing;
+  update mesas set ativa = (numero <= p_quantidade) where numero > 0;
+  return estado(p_token);
+end $$;
+
+create or replace function salvar_categoria(p_token uuid, p_id text, p_nome text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_nome text := trim(coalesce(p_nome, ''));
+begin
+  perform _sessao(p_token, array['admin']);
+  if length(v_nome) not between 1 and 40 then
+    raise exception 'NOME_INVALIDO';
+  end if;
+  if p_id is null then
+    insert into categorias (id, nome, ordem)
+    values ('C' || substr(md5(random()::text || clock_timestamp()::text), 1, 8), v_nome,
+            coalesce((select max(ordem) from categorias), 0) + 1);
+  else
+    update categorias set nome = v_nome where id = p_id and ativa;
+    if not found then
+      raise exception 'CATEGORIA_INVALIDA';
+    end if;
+  end if;
+  return estado(p_token);
+end $$;
+
+create or replace function remover_categoria(p_token uuid, p_id text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _sessao(p_token, array['admin']);
+  if exists (select 1 from produtos where categoria_id = p_id and ativo) then
+    raise exception 'CATEGORIA_COM_PRODUTOS';
+  end if;
+  update categorias set ativa = false where id = p_id;
+  return estado(p_token);
+end $$;
+
+-- Sobe (p_direcao = -1) ou desce (+1) a categoria na ordem do cardápio.
+create or replace function mover_categoria(p_token uuid, p_id text, p_direcao int) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  a categorias;
+  b categorias;
+begin
+  perform _sessao(p_token, array['admin']);
+  perform 1 from categorias order by id for update;
+  -- Renumera 1, 2, 3… para não haver empate.
+  update categorias c set ordem = x.n
+  from (select id, row_number() over (order by ordem, id) as n from categorias) x
+  where c.id = x.id;
+
+  select * into a from categorias where id = p_id and ativa;
+  if not found then
+    raise exception 'CATEGORIA_INVALIDA';
+  end if;
+  if p_direcao < 0 then
+    select * into b from categorias where ativa and ordem < a.ordem order by ordem desc limit 1;
+  else
+    select * into b from categorias where ativa and ordem > a.ordem order by ordem limit 1;
+  end if;
+  if b.id is not null then
+    update categorias set ordem = case when id = a.id then b.ordem else a.ordem end
+    where id in (a.id, b.id);
+  end if;
+  return estado(p_token);
+end $$;
+
+-- Cria (p_id nulo) ou edita um produto.
+create or replace function salvar_produto(p_token uuid, p_id int, p_categoria text, p_nome text, p_preco numeric) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  v_nome text := trim(coalesce(p_nome, ''));
+begin
+  perform _sessao(p_token, array['admin']);
+  if length(v_nome) not between 1 and 60 then
+    raise exception 'NOME_INVALIDO';
+  end if;
+  if p_preco is null or p_preco < 0 or p_preco > 99999 then
+    raise exception 'PRECO_INVALIDO';
+  end if;
+  if not exists (select 1 from categorias where id = p_categoria and ativa) then
+    raise exception 'CATEGORIA_INVALIDA';
+  end if;
+  if p_id is null then
+    insert into produtos (categoria_id, nome, preco) values (p_categoria, v_nome, round(p_preco, 2));
+  else
+    update produtos set categoria_id = p_categoria, nome = v_nome, preco = round(p_preco, 2)
+    where id = p_id and ativo;
+    if not found then
+      raise exception 'PRODUTO_INVALIDO';
+    end if;
+  end if;
+  return estado(p_token);
+end $$;
+
+-- Tira o produto do cardápio. Pedidos e vendas antigos continuam com o nome e o preço da época.
+create or replace function remover_produto(p_token uuid, p_id int) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _sessao(p_token, array['admin']);
+  update produtos set ativo = false where id = p_id;
+  return estado(p_token);
+end $$;
+
+-- ---------- Relatórios ----------
+
+-- Todas as vendas do período (inclusive de caixas já fechados) e os fechamentos de caixa.
+create or replace function relatorio(p_token uuid, p_de timestamptz, p_ate timestamptz) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform _sessao(p_token, array['admin']);
+  return jsonb_build_object(
+    'vendas', coalesce((
+      select jsonb_agg(_json_venda(v) order by v.fechada_em desc)
+      from vendas v where v.fechada_em between p_de and p_ate), '[]'::jsonb),
+    'fechamentos', coalesce((
+      select jsonb_agg(jsonb_build_object(
+        'id', f.id, 'data', _ms(f.fechado_em), 'operador', f.operador_nome,
+        'quantidade', f.quantidade, 'total', f.total) order by f.fechado_em desc)
+      from fechamentos_caixa f where f.fechado_em between p_de and p_ate), '[]'::jsonb)
+  );
+end $$;
+
 -- ---------------------------------------------------------------------
 --  PERMISSÕES DAS FUNÇÕES
 -- ---------------------------------------------------------------------
@@ -753,9 +998,12 @@ revoke execute on all functions in schema public from public, anon, authenticate
 
 grant execute on function
   listar_funcionarios_login, entrar, sair, estado,
-  adicionar_item, remover_item, limpar_rascunho, definir_observacao, enviar_cozinha, cancelar_comanda,
+  adicionar_item, remover_item, observacao_item, limpar_rascunho, definir_observacao, enviar_cozinha,
+  cancelar_comanda, transferir_mesa,
   mudar_status_comanda, finalizar_conta, fechar_caixa,
-  criar_funcionario, editar_funcionario, remover_funcionario
+  criar_funcionario, editar_funcionario, remover_funcionario,
+  definir_mesas, salvar_categoria, remover_categoria, mover_categoria, salvar_produto, remover_produto,
+  relatorio
 to anon, authenticated;
 
 -- Avisa a API do Supabase para recarregar a lista de funções.

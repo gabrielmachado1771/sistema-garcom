@@ -15,6 +15,8 @@ import Caixa from "./pages/Caixa";
 import Conta from "./pages/Conta";
 import Historico from "./pages/Historico";
 import Equipe from "./pages/Equipe";
+import Relatorios from "./pages/Relatorios";
+import Cardapio from "./pages/Cardapio";
 
 function Pagina({ area, param, navegar }) {
   const mesaId = Number(param) || null;
@@ -28,6 +30,10 @@ function Pagina({ area, param, navegar }) {
       return mesaId ? <Conta key={mesaId} mesaId={mesaId} navegar={navegar} /> : <Caixa navegar={navegar} />;
     case "equipe":
       return <Equipe navegar={navegar} />;
+    case "relatorios":
+      return <Relatorios />;
+    case "cardapio":
+      return <Cardapio />;
     default:
       return <Painel navegar={navegar} />;
   }

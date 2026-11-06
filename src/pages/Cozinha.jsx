@@ -1,5 +1,6 @@
 import { useRestaurante } from "../store/contexto";
-import { comandasNaCozinha, MINUTOS_ATRASO } from "../store/regras";
+import AtivarAvisos from "../components/AtivarAvisos";
+import { chaveItem, comandasNaCozinha, MINUTOS_ATRASO } from "../store/regras";
 import { hora, minutosDesde, plural, tempoDecorrido } from "../utils/format";
 import useAgora from "../hooks/useAgora";
 import { Botao, Cabecalho, Etiqueta, Pagina, Vazio } from "../components/ui";
@@ -17,6 +18,8 @@ export default function Cozinha() {
         titulo="Cozinha"
         subtitulo={`${plural(pendentes.length, "pedido")} em preparo · ${prontos.length} aguardando garçom`}
       />
+
+      <AtivarAvisos texto="Receba um aviso quando chegar pedido novo, mesmo com esta tela em segundo plano." />
 
       {pendentes.length === 0 && (
         <Vazio icone="👨‍🍳">Nenhum pedido para preparar no momento.</Vazio>
@@ -53,9 +56,14 @@ export default function Cozinha() {
 
               <ul className="divide-y divide-zinc-800/60">
                 {c.itens.map((item) => (
-                  <li key={item.produtoId} className="py-2 flex gap-3 text-lg">
-                    <span className="font-bold text-orange-400 tabular-nums w-8">{item.qtd}x</span>
-                    <span className="font-medium">{item.nome}</span>
+                  <li key={chaveItem(item)} className="py-2 flex gap-3 text-lg">
+                    <span className="font-bold text-orange-400 tabular-nums w-8 shrink-0">{item.qtd}x</span>
+                    <span className="min-w-0">
+                      <span className="font-medium">{item.nome}</span>
+                      {item.obs && (
+                        <span className="block text-sm font-semibold text-yellow-300">⚠️ {item.obs}</span>
+                      )}
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -93,7 +101,7 @@ export default function Cozinha() {
                 <div className="min-w-0">
                   <p className="font-bold text-green-400">Mesa {c.mesaNumero}</p>
                   <p className="text-xs text-zinc-500 truncate">
-                    pronto {tempoDecorrido(c.prontaEm, agora)} · {c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ")}
+                    pronto {tempoDecorrido(c.prontaEm, agora)} · {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
                   </p>
                 </div>
                 <Botao

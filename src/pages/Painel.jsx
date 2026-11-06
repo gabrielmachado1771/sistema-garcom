@@ -1,14 +1,76 @@
-import { useRestaurante } from "../store/contexto";
+import { useState } from "react";
+import { useAviso, useRestaurante } from "../store/contexto";
 import {
   comandasNaCozinha,
   FUNCOES,
+  MAX_MESAS,
   descreverPagamento,
   mesaOcupada,
   statusMesa,
   totalMesa,
 } from "../store/regras";
 import { hora, moeda } from "../utils/format";
-import { Cabecalho, Cartao, Pagina, TituloSecao } from "../components/ui";
+import { Botao, Cabecalho, Cartao, Pagina, TituloSecao } from "../components/ui";
+
+/** Admin escolhe quantas mesas o restaurante tem. */
+function QuantidadeMesas({ mesas, onFechar }) {
+  const { definirMesas } = useRestaurante();
+  const aviso = useAviso();
+  const [qtd, setQtd] = useState(mesas.length);
+  const ocupadasForaDoLimite = mesas.filter((m) => m.numero > qtd && mesaOcupada(m));
+
+  function salvar() {
+    if (ocupadasForaDoLimite.length > 0) return;
+    definirMesas(qtd);
+    aviso(`O restaurante agora tem ${qtd} mesas.`);
+    onFechar();
+  }
+
+  return (
+    <div className="mb-3 rounded-xl bg-zinc-800/60 p-3 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm text-zinc-300">Quantidade de mesas</span>
+        <div className="flex items-center gap-2">
+          <Botao className="w-9 h-9" aria-label="Menos uma mesa" disabled={qtd <= 1} onClick={() => setQtd(qtd - 1)}>
+            −
+          </Botao>
+          <input
+            type="number"
+            min={1}
+            max={MAX_MESAS}
+            value={qtd}
+            onChange={(e) => setQtd(Math.min(MAX_MESAS, Math.max(1, Math.trunc(Number(e.target.value)) || 1)))}
+            className="w-14 bg-zinc-900 border border-zinc-700 rounded-lg py-1.5 text-center font-bold tabular-nums focus:outline-none focus:border-orange-500"
+            aria-label="Quantidade de mesas"
+          />
+          <Botao className="w-9 h-9" aria-label="Mais uma mesa" disabled={qtd >= MAX_MESAS} onClick={() => setQtd(qtd + 1)}>
+            +
+          </Botao>
+        </div>
+      </div>
+      {ocupadasForaDoLimite.length > 0 && (
+        <p className="text-xs text-red-400">
+          {ocupadasForaDoLimite.length === 1 ? "A mesa" : "As mesas"}{" "}
+          {ocupadasForaDoLimite.map((m) => m.numero).join(", ")} {ocupadasForaDoLimite.length === 1 ? "está ocupada" : "estão ocupadas"}.
+          Feche a conta ou transfira antes de diminuir.
+        </p>
+      )}
+      <div className="flex gap-2">
+        <Botao variante="fantasma" className="flex-1 py-2 text-sm" onClick={onFechar}>
+          Cancelar
+        </Botao>
+        <Botao
+          variante="primario"
+          className="flex-1 py-2 text-sm"
+          disabled={qtd === mesas.length || ocupadasForaDoLimite.length > 0}
+          onClick={salvar}
+        >
+          Salvar
+        </Botao>
+      </div>
+    </div>
+  );
+}
 
 function Indicador({ rotulo, valor, detalhe, cor = "text-white", onClick }) {
   return (
@@ -41,6 +103,7 @@ export default function Painel({ navegar }) {
   const vendido = historico.reduce((acc, v) => acc + v.total, 0);
   const ticket = historico.length ? vendido / historico.length : 0;
   const ativos = funcionarios.filter((f) => f.ativo);
+  const [editandoMesas, setEditandoMesas] = useState(false);
 
   const saudacao = (() => {
     const h = new Date().getHours();
@@ -67,11 +130,11 @@ export default function Painel({ navegar }) {
         />
         <Indicador rotulo="Em aberto nas mesas" valor={moeda(emAberto)} onClick={() => navegar("caixa")} />
         <Indicador
-          rotulo="Vendido hoje"
+          rotulo="Vendido no caixa aberto"
           valor={moeda(vendido)}
-          detalhe={`${historico.length} conta(s) fechada(s)`}
+          detalhe={`${historico.length} conta(s) fechada(s) · ver relatórios`}
           cor="text-green-400"
-          onClick={() => navegar("caixa", "historico")}
+          onClick={() => navegar("relatorios")}
         />
         <Indicador rotulo="Ticket médio" valor={moeda(ticket)} onClick={() => navegar("caixa", "historico")} />
         <Indicador
@@ -86,7 +149,18 @@ export default function Painel({ navegar }) {
 
       <div className="grid md:grid-cols-2 gap-4">
         <Cartao>
-          <TituloSecao>Mapa de mesas</TituloSecao>
+          <TituloSecao
+            acao={
+              !editandoMesas && (
+                <button type="button" className="text-xs text-orange-400 hover:underline" onClick={() => setEditandoMesas(true)}>
+                  Mudar quantidade
+                </button>
+              )
+            }
+          >
+            Mapa de mesas
+          </TituloSecao>
+          {editandoMesas && <QuantidadeMesas mesas={mesas} onFechar={() => setEditandoMesas(false)} />}
           <div className="grid grid-cols-5 gap-2">
             {mesas.map((m) => {
               const st = statusMesa(m);

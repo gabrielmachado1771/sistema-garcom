@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useAviso, useRestaurante } from "../store/contexto";
 import { comandasNaCozinha } from "../store/regras";
+import { notificar, vibrar } from "../utils/notificacoes";
 
 /**
  * Observa mudanças (inclusive vindas de outras abas) e avisa com som:
@@ -27,16 +28,28 @@ export default function Alertas({ area }) {
     if (area === "cozinha") {
       for (const c of novos(preparo)) {
         aviso(`🔔 Novo pedido — Mesa ${c.mesaNumero}`, { tipo: "alerta", som: true, duracao: 5000 });
+        if (document.visibilityState !== "visible") {
+          notificar(`🔔 Novo pedido — Mesa ${c.mesaNumero}`, c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", "), `novo-${c.id}`);
+        }
       }
     }
     if (area === "garcom") {
       for (const c of novos(prontos)) {
+        // Garçom recebe aviso forte só dos próprios pedidos; o admin recebe de todos.
         const minha = c.atendente?.id === usuario?.id;
+        const forte = minha || usuario?.funcao !== "garcom";
+        const itens = c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ");
         aviso(`✅ Mesa ${c.mesaNumero} pronta para servir${minha ? " (sua mesa)" : ""}`, {
-          tipo: "sucesso",
-          som: true,
-          duracao: 6000,
+          tipo: forte ? "sucesso" : "info",
+          som: forte,
+          duracao: forte ? 8000 : 4000,
         });
+        if (forte) {
+          vibrar();
+          if (document.visibilityState !== "visible") {
+            notificar(`🍽️ Mesa ${c.mesaNumero} pronta!`, itens, `pronto-${c.id}`);
+          }
+        }
       }
     }
     // `chave` resume preparo/prontos; evita disparar a cada render.

@@ -34,6 +34,12 @@ const MENSAGENS = {
   STATUS_INVALIDO: "Status inválido.",
   PAGAMENTO_INVALIDO: "Forma de pagamento inválida.",
   VALOR_INSUFICIENTE: "O valor recebido é menor que o total.",
+  MESA_OCUPADA: "Não dá para tirar mesas que estão ocupadas. Feche a conta delas antes.",
+  MESA_VAZIA: "Essa mesa não tem nada para transferir.",
+  MESAS_INVALIDAS: "Quantidade de mesas inválida.",
+  PRECO_INVALIDO: "Informe um preço válido.",
+  CATEGORIA_INVALIDA: "Categoria não encontrada.",
+  CATEGORIA_COM_PRODUTOS: "Remova ou mova os produtos dessa categoria antes de apagá-la.",
   PAGAMENTO_EXCEDENTE: "Pix e cartão não podem passar do total. Troco só sai do dinheiro.",
 };
 
@@ -52,9 +58,37 @@ export function acaoParaRpc(acao) {
   const vazioParaNull = (v) => (v === undefined ? null : v);
   switch (acao.type) {
     case "ADICIONAR_ITEM":
-      return ["adicionar_item", { p_mesa: acao.mesaId, p_produto: acao.produto.id }];
+      return ["adicionar_item", { p_mesa: acao.mesaId, p_produto: acao.produto.id, p_obs: acao.obs ?? "" }];
     case "REMOVER_ITEM":
-      return ["remover_item", { p_mesa: acao.mesaId, p_produto: acao.produtoId }];
+      return ["remover_item", { p_mesa: acao.mesaId, p_produto: acao.produtoId, p_obs: acao.obs ?? "" }];
+    case "OBSERVACAO_ITEM":
+      return [
+        "observacao_item",
+        {
+          p_mesa: acao.mesaId,
+          p_produto: acao.produtoId,
+          p_obs_antiga: acao.obsAntiga,
+          p_obs_nova: acao.obs,
+          p_qtd: acao.qtd,
+        },
+      ];
+    case "TRANSFERIR_MESA":
+      return ["transferir_mesa", { p_origem: acao.origemId, p_destino: acao.destinoId }];
+    case "DEFINIR_MESAS":
+      return ["definir_mesas", { p_quantidade: acao.quantidade }];
+    case "SALVAR_CATEGORIA":
+      return ["salvar_categoria", { p_id: vazioParaNull(acao.id), p_nome: acao.nome }];
+    case "REMOVER_CATEGORIA":
+      return ["remover_categoria", { p_id: acao.id }];
+    case "MOVER_CATEGORIA":
+      return ["mover_categoria", { p_id: acao.id, p_direcao: acao.direcao }];
+    case "SALVAR_PRODUTO":
+      return [
+        "salvar_produto",
+        { p_id: vazioParaNull(acao.id), p_categoria: acao.categoriaId, p_nome: acao.nome, p_preco: acao.preco },
+      ];
+    case "REMOVER_PRODUTO":
+      return ["remover_produto", { p_id: acao.id }];
     case "LIMPAR_RASCUNHO":
       return ["limpar_rascunho", { p_mesa: acao.mesaId }];
     case "DEFINIR_OBSERVACAO":
