@@ -34,6 +34,7 @@ const MENSAGENS = {
   STATUS_INVALIDO: "Status inválido.",
   PAGAMENTO_INVALIDO: "Forma de pagamento inválida.",
   VALOR_INSUFICIENTE: "O valor recebido é menor que o total.",
+  PAGAMENTO_EXCEDENTE: "Pix e cartão não podem passar do total. Troco só sai do dinheiro.",
 };
 
 export function ehErroDeRede(erro) {
@@ -73,10 +74,9 @@ export function acaoParaRpc(acao) {
         "finalizar_conta",
         {
           p_mesa: acao.mesaId,
-          p_forma: acao.formaPagamento,
           p_com_taxa: acao.comTaxa,
           p_pessoas: acao.pessoas,
-          p_recebido: vazioParaNull(acao.recebido),
+          p_pagamentos: acao.pagamentos,
         },
       ];
     case "FECHAR_CAIXA":

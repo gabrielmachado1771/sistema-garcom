@@ -2,7 +2,7 @@ import { useRestaurante } from "../store/contexto";
 import {
   comandasNaCozinha,
   FUNCOES,
-  labelPagamento,
+  descreverPagamento,
   mesaOcupada,
   statusMesa,
   totalMesa,
@@ -132,7 +132,7 @@ export default function Painel({ navegar }) {
                   <span>
                     Mesa {v.mesa}
                     <span className="text-zinc-500">
-                      {" "}· {hora(v.data)} · {labelPagamento(v.formaPagamento)}
+                      {" "}· {hora(v.data)} · {descreverPagamento(v)}
                     </span>
                   </span>
                   <span className="font-semibold text-green-400">{moeda(v.total)}</span>

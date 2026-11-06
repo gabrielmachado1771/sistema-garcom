@@ -1,5 +1,5 @@
 import { useAviso, useRestaurante } from "../store/contexto";
-import { FORMAS_PAGAMENTO, labelPagamento } from "../store/regras";
+import { FORMAS_PAGAMENTO, labelPagamento, pagamentosDaVenda, totaisPorForma } from "../store/regras";
 import { dataHora, moeda, plural } from "../utils/format";
 import { Botao, BotaoVoltar, Cabecalho, Cartao, Pagina, TituloSecao, Vazio } from "../components/ui";
 
@@ -10,10 +10,8 @@ export default function Historico({ navegar }) {
   const total = historico.reduce((acc, v) => acc + v.total, 0);
   const taxas = historico.reduce((acc, v) => acc + v.taxa, 0);
   const ticketMedio = historico.length ? total / historico.length : 0;
-  const porForma = FORMAS_PAGAMENTO.map((f) => ({
-    ...f,
-    valor: historico.filter((v) => v.formaPagamento === f.id).reduce((acc, v) => acc + v.total, 0),
-  })).filter((f) => f.valor > 0);
+  const totais = totaisPorForma(historico);
+  const porForma = FORMAS_PAGAMENTO.map((f) => ({ ...f, valor: totais[f.id] })).filter((f) => f.valor > 0);
 
   function confirmarFechamento() {
     if (window.confirm(`Fechar o caixa e apagar ${plural(historico.length, "venda")} (${moeda(total)})?`)) {
@@ -78,10 +76,16 @@ export default function Historico({ navegar }) {
                     </div>
                     <div className="text-right">
                       <p className="text-orange-500 font-bold">{moeda(v.total)}</p>
-                      <p className="text-xs text-zinc-400">
-                        {labelPagamento(v.formaPagamento)}
-                        {v.pessoas > 1 && ` · ${v.pessoas} pessoas`}
-                      </p>
+                      {pagamentosDaVenda(v).length > 1 ? (
+                        pagamentosDaVenda(v).map((p) => (
+                          <p key={p.forma} className="text-xs text-zinc-400 tabular-nums">
+                            {labelPagamento(p.forma)} {moeda(p.valor)}
+                          </p>
+                        ))
+                      ) : (
+                        <p className="text-xs text-zinc-400">{labelPagamento(pagamentosDaVenda(v)[0].forma)}</p>
+                      )}
+                      {v.pessoas > 1 && <p className="text-xs text-zinc-400">{v.pessoas} pessoas</p>}
                       {v.troco > 0 && <p className="text-xs text-zinc-500">troco {moeda(v.troco)}</p>}
                     </div>
                   </div>

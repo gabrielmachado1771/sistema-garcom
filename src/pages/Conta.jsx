@@ -1,6 +1,15 @@
 import { useState } from "react";
 import { useAviso, useRestaurante } from "../store/contexto";
-import { FORMAS_PAGAMENTO, TAXA_SERVICO, itensConsumidos, totalMesa } from "../store/regras";
+import {
+  FORMAS_PAGAMENTO,
+  TAXA_SERVICO,
+  centavos,
+  descreverPagamento,
+  itensConsumidos,
+  juntarPagamentos,
+  resumoPagamento,
+  totalMesa,
+} from "../store/regras";
 import { moeda, parseValor } from "../utils/format";
 import {
   Botao,
@@ -25,10 +34,9 @@ function Linha({ rotulo, valor, forte }) {
 export default function Conta({ mesaId, navegar }) {
   const { mesas, finalizarConta } = useRestaurante();
   const aviso = useAviso();
-  const [formaPagamento, setFormaPagamento] = useState(null);
+  const [valores, setValores] = useState({}); // forma -> texto digitado
   const [comTaxa, setComTaxa] = useState(true);
   const [pessoas, setPessoas] = useState(1);
-  const [recebidoTexto, setRecebidoTexto] = useState("");
   const [confirmando, setConfirmando] = useState(false);
 
   const mesa = mesas.find((m) => m.id === mesaId);
@@ -47,19 +55,33 @@ export default function Conta({ mesaId, navegar }) {
 
   const itens = itensConsumidos(mesa);
   const subtotal = totalMesa(mesa);
-  const taxa = comTaxa ? subtotal * TAXA_SERVICO : 0;
-  const total = subtotal + taxa;
+  const taxa = centavos(comTaxa ? subtotal * TAXA_SERVICO : 0);
+  const total = centavos(subtotal + taxa);
   const porPessoa = total / pessoas;
-  const recebido = parseValor(recebidoTexto);
-  const troco = recebido - total;
-  const dinheiroInsuficiente = formaPagamento === "dinheiro" && recebido < total - 0.005;
-  const podeFinalizar = formaPagamento && !dinheiroInsuficiente;
+
+  const valorDe = (forma) => centavos(parseValor(valores[forma] ?? ""));
+  const pagamentos = juntarPagamentos(FORMAS_PAGAMENTO.map((f) => ({ forma: f.id, valor: valorDe(f.id) })));
+  const resumo = resumoPagamento(pagamentos, total);
+  const podeFinalizar = resumo.valido;
+  // Quanto falta, sem contar o que já foi digitado nesta forma.
+  const restantePara = (forma) => centavos(Math.max(0, total - (resumo.pago - valorDe(forma))));
+  // Quanto o dinheiro precisa cobrir depois de Pix/cartão (base das sugestões de nota).
+  const faltaEmDinheiro = centavos(Math.max(0, total - resumo.outros));
 
   const naoEnviados = mesa.rascunho.length > 0;
   const emAndamento = mesa.comandas.some((c) => c.status !== "entregue");
 
-  function escolherForma(id) {
-    setFormaPagamento(id);
+  function definirValor(forma, texto) {
+    setValores((v) => ({ ...v, [forma]: texto }));
+    setConfirmando(false);
+  }
+
+  function preencherRestante(forma) {
+    definirValor(forma, restantePara(forma).toFixed(2).replace(".", ","));
+  }
+
+  function limparPagamentos() {
+    setValores({});
     setConfirmando(false);
   }
 
@@ -69,21 +91,28 @@ export default function Conta({ mesaId, navegar }) {
       setConfirmando(true);
       return;
     }
-    finalizarConta(mesa.id, {
-      formaPagamento,
-      comTaxa,
-      pessoas,
-      recebido: formaPagamento === "dinheiro" ? recebido : null,
-    });
+    finalizarConta(mesa.id, { comTaxa, pessoas, pagamentos });
+    const formas = descreverPagamento({ pagamentos });
     aviso(
-      formaPagamento === "dinheiro" && troco > 0.005
-        ? `Mesa ${mesa.numero} fechada. Troco: ${moeda(troco)}`
-        : `Mesa ${mesa.numero} fechada — ${moeda(total)} recebido.`
+      resumo.troco > 0
+        ? `Mesa ${mesa.numero} fechada (${formas}). Troco: ${moeda(resumo.troco)}`
+        : `Mesa ${mesa.numero} fechada — ${moeda(total)} em ${formas}.`
     );
     voltar();
   }
 
-  const sugestoesDinheiro = [...new Set([Math.ceil(total), Math.ceil(total / 10) * 10, Math.ceil(total / 50) * 50, Math.ceil(total / 100) * 100])];
+  const sugestoesDinheiro =
+    faltaEmDinheiro > 0
+      ? [
+          ...new Set([
+            faltaEmDinheiro,
+            Math.ceil(faltaEmDinheiro / 10) * 10,
+            Math.ceil(faltaEmDinheiro / 50) * 50,
+            Math.ceil(faltaEmDinheiro / 100) * 100,
+          ]),
+        ]
+      : [];
+  const algumValor = pagamentos.length > 0;
 
   return (
     <Pagina className="pb-10">
@@ -152,62 +181,107 @@ export default function Conta({ mesaId, navegar }) {
       </Cartao>
 
       <Cartao>
-        <TituloSecao>Forma de pagamento</TituloSecao>
-        <div className="grid grid-cols-2 gap-2" role="radiogroup">
-          {FORMAS_PAGAMENTO.map((f) => (
-            <button
-              type="button"
-              key={f.id}
-              role="radio"
-              aria-checked={formaPagamento === f.id}
-              onClick={() => escolherForma(f.id)}
-              className={`py-3 rounded-xl font-semibold text-sm transition-all active:scale-95 flex items-center justify-center gap-2 ${
-                formaPagamento === f.id ? "bg-orange-500 text-black" : "bg-zinc-800 hover:bg-zinc-700 text-white"
-              }`}
-            >
-              <span aria-hidden>{f.emoji}</span>
-              <span>{f.label}</span>
-            </button>
-          ))}
-        </div>
+        <TituloSecao
+          acao={
+            algumValor && (
+              <button type="button" onClick={limparPagamentos} className="text-xs text-zinc-400 hover:text-white">
+                Limpar
+              </button>
+            )
+          }
+        >
+          Pagamento
+        </TituloSecao>
+        <p className="text-xs text-zinc-500 mb-3">
+          Toque em <strong className="text-zinc-300">Restante</strong> para pagar o que falta numa forma, ou digite um
+          valor em cada forma para dividir (ex.: parte no dinheiro, parte no cartão).
+        </p>
 
-        {formaPagamento === "dinheiro" && (
-          <div className="mt-4 space-y-2">
-            <label className="block">
-              <span className="text-xs text-zinc-400">Valor recebido</span>
-              <input
-                inputMode="decimal"
-                placeholder="0,00"
-                value={recebidoTexto}
-                onChange={(e) => {
-                  setRecebidoTexto(e.target.value);
-                  setConfirmando(false);
-                }}
-                className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-lg focus:outline-none focus:border-orange-500 transition"
-              />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              {sugestoesDinheiro.map((v) => (
+        <div className="space-y-2">
+          {FORMAS_PAGAMENTO.map((f) => {
+            const preenchido = valorDe(f.id) > 0;
+            return (
+              <div key={f.id} className="flex items-center gap-2">
+                <label htmlFor={`pg-${f.id}`} className="w-24 sm:w-28 shrink-0 flex items-center gap-2 text-sm font-semibold">
+                  <span aria-hidden>{f.emoji}</span>
+                  {f.label}
+                </label>
+                <div className="relative flex-1 min-w-0">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 text-sm pointer-events-none">R$</span>
+                  <input
+                    id={`pg-${f.id}`}
+                    inputMode="decimal"
+                    placeholder="0,00"
+                    autoComplete="off"
+                    value={valores[f.id] ?? ""}
+                    onChange={(e) => definirValor(f.id, e.target.value)}
+                    className={`w-full bg-zinc-800 border rounded-xl pl-9 pr-3 py-2 text-base tabular-nums focus:outline-none focus:border-orange-500 transition ${
+                      preenchido ? "border-orange-500/60" : "border-zinc-700"
+                    }`}
+                  />
+                </div>
                 <button
                   type="button"
-                  key={v}
-                  onClick={() => {
-                    setRecebidoTexto(String(v));
-                    setConfirmando(false);
-                  }}
-                  className="px-3 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-sm"
+                  onClick={() => preencherRestante(f.id)}
+                  disabled={restantePara(f.id) === 0 || restantePara(f.id) === valorDe(f.id)}
+                  className="shrink-0 px-3 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold transition disabled:opacity-30 disabled:cursor-not-allowed"
                 >
-                  {moeda(v)}
+                  Restante
                 </button>
-              ))}
-            </div>
-            {recebidoTexto && (
-              <p className={`font-bold ${dinheiroInsuficiente ? "text-red-400" : "text-green-400"}`}>
-                {dinheiroInsuficiente ? `Faltam ${moeda(-troco)}` : `Troco: ${moeda(troco)}`}
-              </p>
-            )}
+              </div>
+            );
+          })}
+        </div>
+
+        {sugestoesDinheiro.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-xs text-zinc-500">💵 Recebeu em dinheiro:</span>
+            {sugestoesDinheiro.map((v) => (
+              <button
+                type="button"
+                key={v}
+                onClick={() => definirValor("dinheiro", v.toFixed(2).replace(".", ","))}
+                className="px-3 py-1 rounded-full bg-zinc-800 hover:bg-zinc-700 text-sm tabular-nums"
+              >
+                {moeda(v)}
+              </button>
+            ))}
           </div>
         )}
+
+        <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+          <div className="bg-zinc-800/60 rounded-xl py-2">
+            <p className="text-xs text-zinc-400">Total</p>
+            <p className="font-bold tabular-nums">{moeda(total)}</p>
+          </div>
+          <div className="bg-zinc-800/60 rounded-xl py-2">
+            <p className="text-xs text-zinc-400">Pago</p>
+            <p className="font-bold tabular-nums">{moeda(resumo.pago)}</p>
+          </div>
+          <div className={`rounded-xl py-2 ${resumo.troco > 0 ? "bg-green-500/10" : resumo.falta > 0 ? "bg-red-500/10" : "bg-green-500/10"}`}>
+            <p className="text-xs text-zinc-400">{resumo.troco > 0 ? "Troco" : "Falta"}</p>
+            <p className={`font-bold tabular-nums ${resumo.falta > 0 ? "text-red-400" : "text-green-400"}`}>
+              {moeda(resumo.troco > 0 ? resumo.troco : resumo.falta)}
+            </p>
+          </div>
+        </div>
+
+        <p
+          role="status"
+          className={`mt-3 text-sm font-semibold ${
+            resumo.excedente > 0 ? "text-red-400" : resumo.valido ? "text-green-400" : "text-zinc-400"
+          }`}
+        >
+          {resumo.excedente > 0
+            ? `Pix e cartão passaram do total em ${moeda(resumo.excedente)}. Troco só pode sair do dinheiro.`
+            : resumo.valido
+              ? resumo.troco > 0
+                ? `✓ Pago. Devolva ${moeda(resumo.troco)} de troco em dinheiro.`
+                : `✓ Pago${pagamentos.length > 1 ? ` em ${descreverPagamento({ pagamentos })}` : ""}.`
+              : algumValor
+                ? `Ainda faltam ${moeda(resumo.falta)}.`
+                : "Informe quanto foi pago em cada forma."}
+        </p>
       </Cartao>
 
       <Botao

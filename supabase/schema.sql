@@ -17,7 +17,7 @@
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
-drop table if exists comanda_itens, comandas, vendas, fechamentos_caixa,
+drop table if exists comanda_itens, comandas, venda_pagamentos, vendas, fechamentos_caixa,
   rascunho_itens, mesas, produtos, categorias, sessoes, funcionarios cascade;
 
 -- ---------------------------------------------------------------------
@@ -89,7 +89,7 @@ create table vendas (
   subtotal        numeric(10, 2) not null,
   taxa            numeric(10, 2) not null default 0,
   total           numeric(10, 2) not null,
-  forma_pagamento text not null check (forma_pagamento in ('dinheiro', 'pix', 'credito', 'debito')),
+  forma_pagamento text not null check (forma_pagamento in ('dinheiro', 'pix', 'credito', 'debito', 'misto')),
   pessoas         int not null default 1 check (pessoas >= 1),
   recebido        numeric(10, 2),
   troco           numeric(10, 2),
@@ -100,6 +100,16 @@ create table vendas (
   operador_id     uuid references funcionarios (id) on delete set null,
   operador_nome   text,
   fechamento_id   uuid references fechamentos_caixa (id) -- null = ainda no caixa do dia
+);
+
+-- Uma venda pode ser paga em várias formas (ex.: R$ 20 dinheiro + R$ 5 débito + R$ 5 crédito).
+-- "valor" é quanto foi entregue naquela forma; o troco (vendas.troco) sai sempre do dinheiro.
+create table venda_pagamentos (
+  id       uuid primary key default gen_random_uuid(),
+  venda_id uuid not null references vendas (id) on delete cascade,
+  forma    text not null check (forma in ('dinheiro', 'pix', 'credito', 'debito')),
+  valor    numeric(10, 2) not null check (valor > 0),
+  unique (venda_id, forma)
 );
 
 -- Cada envio para a cozinha vira uma comanda.
@@ -139,6 +149,7 @@ alter table mesas             enable row level security;
 alter table rascunho_itens    enable row level security;
 alter table fechamentos_caixa enable row level security;
 alter table vendas            enable row level security;
+alter table venda_pagamentos  enable row level security;
 alter table comandas          enable row level security;
 alter table comanda_itens     enable row level security;
 
@@ -288,6 +299,10 @@ language sql stable security definer set search_path = public as $$
     'pessoas', v.pessoas,
     'recebido', v.recebido,
     'troco', v.troco,
+    'pagamentos', coalesce((
+      select jsonb_agg(jsonb_build_object('forma', vp.forma, 'valor', vp.valor)
+        order by array_position(array['dinheiro', 'pix', 'credito', 'debito'], vp.forma))
+      from venda_pagamentos vp where vp.venda_id = v.id), '[]'::jsonb),
     'abertaEm', _ms(v.aberta_em),
     'data', _ms(v.fechada_em),
     'atendente', v.atendente_nome,
@@ -538,8 +553,12 @@ end $$;
 
 -- ---------- Caixa ----------
 
+-- Versão antiga (uma forma só); removida para não haver duas funções com o mesmo nome.
+drop function if exists finalizar_conta(uuid, int, text, boolean, int, numeric);
+
+-- p_pagamentos: [{"forma": "dinheiro", "valor": 20}, {"forma": "debito", "valor": 5}, ...]
 create or replace function finalizar_conta(
-  p_token uuid, p_mesa int, p_forma text, p_com_taxa boolean, p_pessoas int, p_recebido numeric default null
+  p_token uuid, p_mesa int, p_com_taxa boolean, p_pessoas int, p_pagamentos jsonb
 ) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
@@ -548,6 +567,10 @@ declare
   v_subtotal numeric(10, 2);
   v_taxa numeric(10, 2);
   v_total numeric(10, 2);
+  v_pago numeric(10, 2);
+  v_dinheiro numeric(10, 2);
+  v_formas int;
+  v_forma_unica text;
   v_venda uuid;
 begin
   u := _sessao(p_token, array['caixa']);
@@ -558,7 +581,16 @@ begin
   if not exists (select 1 from comandas where mesa_numero = p_mesa and venda_id is null) then
     raise exception 'MESA_SEM_CONTA';
   end if;
-  if p_forma is null or p_forma not in ('dinheiro', 'pix', 'credito', 'debito') then
+
+  -- Cada parte precisa ter uma forma válida e um valor numérico maior que zero.
+  if p_pagamentos is null or jsonb_typeof(p_pagamentos) <> 'array' or jsonb_array_length(p_pagamentos) = 0 then
+    raise exception 'PAGAMENTO_INVALIDO';
+  end if;
+  if exists (
+    select 1 from jsonb_array_elements(p_pagamentos) p
+    where coalesce(p->>'forma', '') not in ('dinheiro', 'pix', 'credito', 'debito')
+       or case when jsonb_typeof(p->'valor') = 'number' then round((p->>'valor')::numeric, 2) <= 0 else true end
+  ) then
     raise exception 'PAGAMENTO_INVALIDO';
   end if;
 
@@ -569,20 +601,37 @@ begin
   v_taxa := case when p_com_taxa then round(v_subtotal * 0.10, 2) else 0 end;
   v_total := v_subtotal + v_taxa;
 
-  if p_forma = 'dinheiro' and coalesce(p_recebido, 0) < v_total then
+  select sum(round((p->>'valor')::numeric, 2)),
+         coalesce(sum(round((p->>'valor')::numeric, 2)) filter (where p->>'forma' = 'dinheiro'), 0),
+         count(distinct p->>'forma'),
+         min(p->>'forma')
+    into v_pago, v_dinheiro, v_formas, v_forma_unica
+  from jsonb_array_elements(p_pagamentos) p;
+
+  if v_pago < v_total then
     raise exception 'VALOR_INSUFICIENTE';
+  end if;
+  -- Troco só sai do dinheiro: Pix e cartão juntos não podem passar do total.
+  if v_pago - v_dinheiro > v_total then
+    raise exception 'PAGAMENTO_EXCEDENTE';
   end if;
 
   insert into vendas (
     mesa_numero, subtotal, taxa, total, forma_pagamento, pessoas, recebido, troco,
     aberta_em, atendente_id, atendente_nome, operador_id, operador_nome
   ) values (
-    p_mesa, v_subtotal, v_taxa, v_total, p_forma, greatest(coalesce(p_pessoas, 1), 1),
-    case when p_forma = 'dinheiro' then p_recebido end,
-    case when p_forma = 'dinheiro' then p_recebido - v_total end,
+    p_mesa, v_subtotal, v_taxa, v_total,
+    case when v_formas = 1 then v_forma_unica else 'misto' end,
+    greatest(coalesce(p_pessoas, 1), 1),
+    v_pago, v_pago - v_total,
     m.aberta_em, m.atendente_id, (select nome from funcionarios where id = m.atendente_id),
     u.id, u.nome
   ) returning id into v_venda;
+
+  insert into venda_pagamentos (venda_id, forma, valor)
+  select v_venda, p->>'forma', sum(round((p->>'valor')::numeric, 2))
+  from jsonb_array_elements(p_pagamentos) p
+  group by p->>'forma';
 
   update comandas set venda_id = v_venda where mesa_numero = p_mesa and venda_id is null;
   delete from rascunho_itens where mesa_numero = p_mesa;

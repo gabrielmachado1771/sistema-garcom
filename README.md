@@ -70,6 +70,7 @@ erDiagram
     funcionarios ||--o{ mesas : "atende"
     funcionarios ||--o{ comandas : "envia"
     funcionarios ||--o{ vendas : "fecha"
+    vendas ||--|{ venda_pagamentos : "paga em"
     categorias ||--o{ produtos : "agrupa"
     mesas ||--o{ rascunho_itens : "tem"
     produtos ||--o{ rascunho_itens : ""
@@ -102,8 +103,13 @@ erDiagram
       int qtd }
     vendas { uuid id PK
       numeric total
-      text forma_pagamento
+      text forma_pagamento "dinheiro | pix | credito | debito | misto"
+      numeric troco
       uuid fechamento_id FK }
+    venda_pagamentos { uuid id PK
+      uuid venda_id FK
+      text forma
+      numeric valor }
 ```
 
 **Segurança:** todas as tabelas têm RLS ligado e nenhum acesso direto. O site só chama
@@ -117,6 +123,11 @@ Tudo está em [`supabase/schema.sql`](supabase/schema.sql).
 1. Crie uma conta e um projeto grátis em [supabase.com](https://supabase.com).
 2. No projeto, abra **SQL Editor → New query**, cole todo o conteúdo de `supabase/schema.sql` e clique em **Run**.
    ⚠️ Rodar de novo apaga e recria as tabelas.
+
+**Já tinha o banco criado antes?** Não rode o `schema.sql` de novo. Rode só as migrações novas,
+na ordem, pelo mesmo SQL Editor (elas não apagam dados):
+
+- [`supabase/migracao-01-pagamento-dividido.sql`](supabase/migracao-01-pagamento-dividido.sql): pagamento dividido em várias formas.
 3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
 4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.
 5. Para o site do GitHub Pages: no repositório, **Settings → Secrets and variables → Actions → Variables**,
@@ -138,7 +149,8 @@ src/
   store/regras.js            regras de negócio (reducer e cálculos, sem React)
   store/RestauranteProvider  estado global (modo local ou nuvem)
   store/supabase.js          conexão com o banco e tradução das ações em funções SQL
-supabase/schema.sql          tabelas, segurança e funções do banco
+supabase/schema.sql          tabelas, segurança e funções do banco (instalação do zero)
+supabase/migracao-*.sql      atualizações para um banco que já existe
   pages/                     Login, Painel, Equipe, Garcom, Mesa, Cozinha, Caixa, Conta, Historico
   components/ui.jsx          componentes visuais reutilizáveis
   data/cardapio.js           produtos e categorias

@@ -7,6 +7,8 @@ export const NUM_MESAS = 10;
 export const TAXA_SERVICO = 0.1;
 export const MINUTOS_ATRASO = 20;
 
+export const centavos = (v) => Math.round(v * 100) / 100;
+
 export const FORMAS_PAGAMENTO = [
   { id: "dinheiro", label: "Dinheiro", emoji: "💵" },
   { id: "pix", label: "Pix", emoji: "📱" },
@@ -35,7 +37,58 @@ export function iniciais(nome) {
 }
 
 export function labelPagamento(id) {
+  if (id === "misto") return "Misto";
   return FORMAS_PAGAMENTO.find((f) => f.id === id)?.label ?? id;
+}
+
+/** Partes do pagamento de uma venda (vendas antigas tinham uma forma só). */
+export function pagamentosDaVenda(venda) {
+  if (venda.pagamentos?.length) return venda.pagamentos;
+  return [{ forma: venda.formaPagamento, valor: venda.recebido ?? venda.total }];
+}
+
+/** Ex.: "Dinheiro + Débito + Crédito". */
+export function descreverPagamento(venda) {
+  return pagamentosDaVenda(venda)
+    .map((p) => labelPagamento(p.forma))
+    .join(" + ");
+}
+
+/** Quanto entrou de fato em cada forma (o troco sai do dinheiro). */
+export function totaisPorForma(historico) {
+  const totais = Object.fromEntries(FORMAS_PAGAMENTO.map((f) => [f.id, 0]));
+  for (const venda of historico) {
+    for (const p of pagamentosDaVenda(venda)) {
+      if (!(p.forma in totais)) continue;
+      const liquido = p.forma === "dinheiro" ? p.valor - (venda.troco ?? 0) : p.valor;
+      totais[p.forma] = centavos(totais[p.forma] + liquido);
+    }
+  }
+  return totais;
+}
+
+/**
+ * Confere um pagamento dividido em várias formas.
+ * Regras: o total pago precisa cobrir a conta, e o troco só pode sair
+ * do dinheiro (Pix e cartão não podem passar do valor da conta).
+ */
+export function resumoPagamento(pagamentos, total) {
+  const pago = centavos(pagamentos.reduce((acc, p) => acc + p.valor, 0));
+  const dinheiro = centavos(pagamentos.filter((p) => p.forma === "dinheiro").reduce((acc, p) => acc + p.valor, 0));
+  const outros = centavos(pago - dinheiro);
+  const falta = centavos(Math.max(0, total - pago));
+  const troco = centavos(Math.max(0, pago - total));
+  const excedente = centavos(Math.max(0, outros - total));
+  const formasValidas = pagamentos.every((p) => FORMAS_PAGAMENTO.some((f) => f.id === p.forma) && p.valor > 0);
+  return {
+    pago,
+    dinheiro,
+    outros,
+    falta,
+    troco,
+    excedente,
+    valido: pagamentos.length > 0 && formasValidas && falta === 0 && excedente === 0,
+  };
 }
 
 function novaMesa(numero) {
@@ -103,7 +156,13 @@ export const CARDAPIO_LOCAL = Object.entries(produtosLocais).map(([id, produtos]
 
 // ---------- seletores ----------
 
-const centavos = (v) => Math.round(v * 100) / 100;
+/** Soma valores repetidos da mesma forma e mantém a ordem de FORMAS_PAGAMENTO. */
+export function juntarPagamentos(pagamentos) {
+  return FORMAS_PAGAMENTO.map((f) => ({
+    forma: f.id,
+    valor: centavos(pagamentos.filter((p) => p.forma === f.id).reduce((acc, p) => acc + centavos(p.valor), 0)),
+  })).filter((p) => p.valor > 0);
+}
 
 export function somaItens(itens) {
   return itens.reduce((acc, i) => acc + i.preco * i.qtd, 0);
@@ -261,10 +320,13 @@ export function reducer(state, action) {
     case "FINALIZAR_CONTA": {
       const mesa = state.mesas.find((m) => m.id === action.mesaId);
       if (!mesa || mesa.comandas.length === 0) return state;
-      const { formaPagamento, comTaxa, pessoas, recebido } = action;
+      const { comTaxa, pessoas } = action;
       const subtotal = totalMesa(mesa);
       const taxa = centavos(comTaxa ? subtotal * TAXA_SERVICO : 0);
       const total = centavos(subtotal + taxa);
+      const pagamentos = juntarPagamentos(action.pagamentos ?? []);
+      const resumo = resumoPagamento(pagamentos, total);
+      if (!resumo.valido) return state;
       const venda = {
         id: `${mesa.id}-${Date.now()}`,
         mesa: mesa.numero,
@@ -272,10 +334,11 @@ export function reducer(state, action) {
         subtotal,
         taxa,
         total,
-        formaPagamento,
+        formaPagamento: pagamentos.length === 1 ? pagamentos[0].forma : "misto",
+        pagamentos,
         pessoas,
-        recebido: formaPagamento === "dinheiro" ? recebido : null,
-        troco: formaPagamento === "dinheiro" ? centavos(Math.max(0, recebido - total)) : null,
+        recebido: resumo.pago,
+        troco: resumo.troco,
         abertaEm: mesa.abertaEm,
         atendente: mesa.atendente?.nome ?? null,
         operador: action.operador ?? null,
