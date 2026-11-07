@@ -1,6 +1,7 @@
-import { FORMAS_PAGAMENTO, centavos } from "../../store/regras";
+import { FORMAS_PAGAMENTO, centavos, descreverPagamento } from "../../store/regras";
 import { moeda, parseValor } from "../../utils/format";
-import { situacao } from "./calculos";
+import { partesDoPagamento, situacao } from "./calculos";
+import PagamentoMisto from "./PagamentoMisto";
 
 /** Notas que o cliente provavelmente vai entregar para pagar `valor`. */
 function sugestoesNotas(valor) {
@@ -12,9 +13,12 @@ function sugestoesNotas(valor) {
  * Cartão de pagamento de uma pessoa (ou da conta inteira).
  * Fechado: mostra só nome, valor e se já pagou. Aberto: botões das formas e, no dinheiro, o troco.
  */
-export default function PagamentoPessoa({ titulo, valor, detalhe, pagamento, aberto, onAbrir, onFechar, onPagar, onDesfazer }) {
+export default function PagamentoPessoa({ id, titulo, valor, detalhe, pagamento, aberto, onAbrir, onFechar, onPagar, onDesfazer }) {
   const s = situacao(valor, pagamento);
-  const forma = FORMAS_PAGAMENTO.find((f) => f.id === pagamento?.forma);
+  const misto = pagamento?.forma === "misto";
+  const comoPagou = misto
+    ? descreverPagamento({ pagamentos: partesDoPagamento(valor, pagamento) })
+    : FORMAS_PAGAMENTO.find((f) => f.id === pagamento?.forma)?.label;
 
   if (!aberto) {
     return (
@@ -37,7 +41,7 @@ export default function PagamentoPessoa({ titulo, valor, detalhe, pagamento, abe
           <span className="block font-semibold truncate">{titulo}</span>
           <span className={`block text-xs ${s.pago ? "text-green-300" : "text-zinc-500"}`}>
             {s.pago
-              ? `Pagou no ${forma.label.toLowerCase()}${s.troco > 0 ? ` · troco ${moeda(s.troco)}` : ""}`
+              ? `Pagou ${misto ? "em" : "no"} ${misto ? comoPagou : comoPagou.toLowerCase()}${s.troco > 0 ? ` · troco ${moeda(s.troco)}` : ""}`
               : "Ainda não pagou — toque para receber"}
           </span>
         </span>
@@ -56,6 +60,23 @@ export default function PagamentoPessoa({ titulo, valor, detalhe, pagamento, abe
         <p className="text-2xl font-bold text-orange-400 tabular-nums">{moeda(valor)}</p>
       </div>
 
+      {misto ? (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-zinc-400">Pagando em mais de uma forma</p>
+            <button type="button" onClick={onDesfazer} className="text-xs text-orange-400 hover:underline">
+              Voltar para uma forma só
+            </button>
+          </div>
+          <PagamentoMisto
+            embutido
+            idBase={`pg-${id}`}
+            total={valor}
+            valores={pagamento.valores ?? {}}
+            onMudar={(f, texto) => onPagar({ forma: "misto", valores: { ...pagamento.valores, [f]: texto } }, true)}
+          />
+        </div>
+      ) : (
       <div>
         <p className="text-xs text-zinc-400 mb-2">Como vai pagar?</p>
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -79,7 +100,15 @@ export default function PagamentoPessoa({ titulo, valor, detalhe, pagamento, abe
             );
           })}
         </div>
+        <button
+          type="button"
+          onClick={() => onPagar({ forma: "misto", valores: {} }, true)}
+          className="mt-2 w-full py-2 rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-300 hover:border-orange-500/60 hover:text-white transition"
+        >
+          ➗ Pagar com mais de uma forma <span className="text-zinc-500">(ex.: parte no Pix, parte no dinheiro)</span>
+        </button>
       </div>
+      )}
 
       {pagamento?.forma === "dinheiro" && (
         <div className="rounded-xl bg-zinc-800/60 p-3 space-y-2">
@@ -119,19 +148,19 @@ export default function PagamentoPessoa({ titulo, valor, detalhe, pagamento, abe
       )}
 
       <div className="flex gap-2">
-        {pagamento && (
+        {pagamento && !misto && (
           <button type="button" onClick={onDesfazer} className="px-3 py-2 text-sm text-zinc-400 hover:text-white">
             Desfazer
           </button>
         )}
-        {pagamento?.forma === "dinheiro" && (
+        {(pagamento?.forma === "dinheiro" || misto) && (
           <button
             type="button"
             disabled={!s.pago}
             onClick={onFechar}
             className="ml-auto px-4 py-2 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-semibold disabled:opacity-40"
           >
-            Confirmar dinheiro
+            {misto ? "Confirmar pagamento" : "Confirmar dinheiro"}
           </button>
         )}
       </div>

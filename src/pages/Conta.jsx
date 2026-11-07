@@ -14,8 +14,7 @@ import {
 import { moeda, plural } from "../utils/format";
 import { Botao, BotaoVoltar, Cabecalho, Cartao, ListaItens, Pagina, TituloSecao, Vazio } from "../components/ui";
 import PagamentoPessoa from "../components/conta/PagamentoPessoa";
-import PagamentoMisto from "../components/conta/PagamentoMisto";
-import { pagamentosDosValores, situacao } from "../components/conta/calculos";
+import { partesDoPagamento, situacao } from "../components/conta/calculos";
 import QuemConsumiu from "../components/conta/QuemConsumiu";
 
 const MAX_PESSOAS = 20;
@@ -36,8 +35,6 @@ export default function Conta({ mesaId, navegar }) {
   const [pessoaAtiva, setPessoaAtiva] = useState(0);
   const [pagos, setPagos] = useState({}); // pessoa -> { forma, recebido, texto }
   const [aberto, setAberto] = useState(null); // pessoa com o cartão aberto (null = a próxima que falta)
-  const [misto, setMisto] = useState(false); // uma pessoa pagando em várias formas
-  const [valores, setValores] = useState({}); // valores digitados no modo misto
   const [confirmando, setConfirmando] = useState(false);
 
   const mesa = mesas.find((m) => m.id === mesaId);
@@ -66,24 +63,15 @@ export default function Conta({ mesaId, navegar }) {
   const nomes = Array.from({ length: Math.max(pessoas, 1) }, (_, i) => `Pessoa ${i + 1}`);
 
   // ---- situação do pagamento ----
-  const usandoMisto = !varias && misto;
   const situacoes = partes.map((p) => situacao(p.total, pagos[p.pessoa]));
-  const pagamentos = usandoMisto
-    ? pagamentosDosValores(valores)
-    : juntarPagamentos(
-        partes
-          .filter((_, i) => situacoes[i].pago)
-          .map((p) => {
-            const pg = pagos[p.pessoa];
-            return { forma: pg.forma, valor: pg.forma === "dinheiro" ? (pg.recebido ?? p.total) : p.total };
-          })
-      );
+  // Junta o que cada pessoa pagou (cada uma pode ter usado uma ou várias formas).
+  const pagamentos = juntarPagamentos(
+    partes.filter((_, i) => situacoes[i].pago).flatMap((p) => partesDoPagamento(p.total, pagos[p.pessoa]))
+  );
   const resumo = resumoPagamento(pagamentos, total);
   const quantosPagaram = situacoes.filter((s) => s.pago).length;
-  const todosPagaram = usandoMisto ? resumo.valido : quantosPagaram === partes.length;
-  const recebido = usandoMisto
-    ? centavos(Math.min(resumo.pago - resumo.troco, total))
-    : centavos(situacoes.reduce((a, s) => a + s.coberto, 0));
+  const todosPagaram = quantosPagaram === partes.length;
+  const recebido = centavos(situacoes.reduce((a, s) => a + s.coberto, 0));
   const podeFinalizar = todosPagaram && resumo.valido;
   const proximaQueFalta = partes.findIndex((_, i) => !situacoes[i].pago);
   const abertoAgora = aberto ?? (proximaQueFalta >= 0 ? partes[proximaQueFalta].pessoa : null);
@@ -105,7 +93,6 @@ export default function Conta({ mesaId, navegar }) {
     if (id === modo) return;
     valoresMudaram();
     setModo(id);
-    setMisto(false);
   }
 
   function mudarPessoas(n) {
@@ -299,33 +286,12 @@ export default function Conta({ mesaId, navegar }) {
           <h2 className="font-bold text-xs text-zinc-400 uppercase tracking-wider">
             {varias ? `Receber de cada pessoa (${quantosPagaram}/${partes.length})` : "Receber"}
           </h2>
-          {!varias && (
-            <button
-              type="button"
-              onClick={() => {
-                setMisto((m) => !m);
-                setConfirmando(false);
-              }}
-              className="text-xs text-orange-400 hover:underline"
-            >
-              {misto ? "Voltar para uma forma só" : "Pagar com mais de uma forma"}
-            </button>
-          )}
         </div>
 
-        {usandoMisto ? (
-          <PagamentoMisto
-            total={total}
-            valores={valores}
-            onMudar={(forma, texto) => {
-              setValores((v) => ({ ...v, [forma]: texto }));
-              setConfirmando(false);
-            }}
-          />
-        ) : (
-          partes.map((p) => (
+        {partes.map((p) => (
             <PagamentoPessoa
               key={p.pessoa}
+              id={p.pessoa}
               titulo={varias ? nomes[p.pessoa] : "Conta inteira"}
               valor={p.total}
               detalhe={
@@ -346,8 +312,7 @@ export default function Conta({ mesaId, navegar }) {
               onPagar={(pg, manterAberto) => pagar(p.pessoa, pg, manterAberto)}
               onDesfazer={() => desfazer(p.pessoa)}
             />
-          ))
-        )}
+          ))}
       </section>
 
       {/* Barra fixa: quanto já entrou + finalizar */}
