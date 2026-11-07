@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import useHashRoute from "./hooks/useHashRoute";
 import RestauranteProvider from "./store/RestauranteProvider";
 import AvisosProvider from "./components/Avisos";
@@ -17,6 +17,9 @@ import Historico from "./pages/Historico";
 import Equipe from "./pages/Equipe";
 import Relatorios from "./pages/Relatorios";
 import Cardapio from "./pages/Cardapio";
+
+// O portal do dono do sistema só é baixado quando alguém abre #/admin.
+const AdminApp = lazy(() => import("./admin/AdminApp"));
 
 function Pagina({ area, param, navegar }) {
   const mesaId = Number(param) || null;
@@ -106,7 +109,8 @@ function Carregando({ texto }) {
 
 function Rotas() {
   const { usuario, carregando, empresa } = useRestaurante();
-  const [[tela, param], navegar] = useHashRoute();
+  const [rota, navegar] = useHashRoute();
+  const [tela, param] = rota;
   const area = tela || "painel";
   const permitido = podeAcessar(usuario, area);
 
@@ -117,13 +121,20 @@ function Rotas() {
 
   // Funcionário só enxerga a própria área: qualquer outra rota volta para ela.
   useEffect(() => {
-    if (tela === "r") return;
+    if (tela === "r" || tela === "admin") return;
     if (usuario && !permitido) {
       const inicial = areaInicial(usuario);
       navegar(inicial === "painel" ? undefined : inicial);
     }
   }, [usuario, permitido, navegar, tela]);
 
+  if (tela === "admin") {
+    return (
+      <Suspense fallback={<Carregando texto="Abrindo o portal…" />}>
+        <AdminApp rota={rota} navegar={navegar} />
+      </Suspense>
+    );
+  }
   if (tela === "r" && param) return <EntradaPorLink codigo={param} navegar={navegar} />;
   if (carregando) return <Carregando texto="Conectando ao banco de dados…" />;
   if (!usuario) return <Login />;

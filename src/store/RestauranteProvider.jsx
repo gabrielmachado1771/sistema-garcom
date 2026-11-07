@@ -437,6 +437,7 @@ function ProviderNuvem({ children }) {
       modo: "nuvem",
       conexao,
       empresa: state?.empresa ?? empresaLogin,
+      suporte: state?.suporte ?? null, // nome do dono do sistema, quando é um acesso de suporte
       carregando: (!!token && !state) || (!token && !!restaurante && funcionariosLogin === null),
       usuario,
       funcionariosLogin: funcionariosLogin ?? [],

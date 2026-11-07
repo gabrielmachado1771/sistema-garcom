@@ -4,8 +4,8 @@ Sistema de restaurante **multiempresa**: vários restaurantes usam o mesmo siste
 vê só os próprios dados. Três ambientes: **Garçom**, **Cozinha** e **Caixa**, mais a área do administrador.
 Feito com React 19 + Vite + Tailwind CSS 4 + Supabase (PostgreSQL).
 
-🌐 **Acesse online:** https://gabrielmachado1771.github.io/sistema-garcom/ (GitHub Pages)
-— a hospedagem principal passa a ser a **Vercel** (veja [Hospedagem](#hospedagem)).
+🌐 **Acesse online:** https://sistema-garcom.vercel.app (Vercel) — também em
+https://gabrielmachado1771.github.io/sistema-garcom/ (GitHub Pages). Veja [Hospedagem](#hospedagem).
 
 ## Como rodar
 
@@ -41,6 +41,24 @@ O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada
 
 > No **modo local** (sem banco configurado) os PINs ficam no navegador, o que serve só para demonstração.
 > Com o **banco de dados** ligado, o PIN é conferido no servidor e guardado com bcrypt.
+
+## Portal do dono do sistema (`/#/admin`)
+
+Área separada para quem administra o sistema inteiro (não é o admin de um restaurante):
+
+- **Login por e-mail e senha** (Supabase Auth) com **verificação em 2 etapas obrigatória**
+  (aplicativo autenticador: Google Authenticator, Microsoft Authenticator, Authy…)
+- **Restaurantes:** status, vendas de hoje e do mês, mesas abertas agora e último acesso de cada um
+- **Novo restaurante** em 4 passos: dados, primeiro administrador com PIN provisório, cardápio
+  (vazio ou copiado de outro restaurante) e revisão — no fim, uma mensagem pronta para mandar ao cliente
+- **Editar, suspender e reativar** restaurantes; **resetar o PIN** de qualquer funcionário
+- **Acessar como suporte:** entra no restaurante por 2 horas com uma faixa amarela na tela;
+  o acesso e tudo o que for feito ficam no log
+- **Relatórios consolidados** de todos os restaurantes, por período, com planilha CSV
+- **Auditoria:** logins, bloqueios, cancelamentos, mudanças de cardápio e de preço, equipe, caixa e
+  ações do próprio portal — com filtro por restaurante, período e busca
+
+Só entra quem está na tabela `super_admins`. O cadastro público do Supabase Auth deve ficar desligado.
 
 ## Funcionalidades
 
@@ -154,6 +172,10 @@ chamando a API na mão. Restaurante suspenso tem as sessões bloqueadas na hora.
 O tempo real usa um canal por restaurante, com nome secreto entregue só depois do login;
 a mensagem não leva dados (só avisa "algo mudou").
 
+**Testes** (podem ser rodados em qualquer banco; tudo é desfeito no final):
+[`supabase/testes/portal-admin.sql`](supabase/testes/portal-admin.sql) testa o portal (permissões, 2FA obrigatório,
+criar/suspender restaurante, reset de PIN, suporte e auditoria).
+
 **Testes de isolamento:** [`supabase/testes/isolamento.sql`](supabase/testes/isolamento.sql) cria dois
 restaurantes de teste e tenta, por todas as funções, fazer um enxergar ou alterar o outro.
 Pode ser rodado em qualquer banco (tudo é desfeito no final); termina sem erro se estiver tudo isolado.
@@ -172,6 +194,7 @@ na ordem, pelo mesmo SQL Editor (elas não apagam dados):
 - [`supabase/migracao-01-pagamento-dividido.sql`](supabase/migracao-01-pagamento-dividido.sql): pagamento dividido em várias formas.
 - [`supabase/migracao-02-cardapio-mesas-relatorios.sql`](supabase/migracao-02-cardapio-mesas-relatorios.sql): observação por item, transferir mesas, quantidade de mesas, cardápio editável e relatórios.
 - [`supabase/migracao-03-multiempresa.sql`](supabase/migracao-03-multiempresa.sql): multiempresa. Os dados existentes viram o primeiro restaurante. Faça um backup antes.
+- [`supabase/migracao-04-portal-admin.sql`](supabase/migracao-04-portal-admin.sql): portal do dono do sistema e log de auditoria.
 
 3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
 4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.

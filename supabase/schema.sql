@@ -22,7 +22,7 @@
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
-drop table if exists comanda_itens, comandas, venda_pagamentos, vendas, fechamentos_caixa,
+drop table if exists log_auditoria, super_admins, comanda_itens, comandas, venda_pagamentos, vendas, fechamentos_caixa,
   rascunho_itens, mesas, produtos, categorias, sessoes, funcionarios, empresas cascade;
 
 -- ---------------------------------------------------------------------
@@ -62,7 +62,8 @@ create table sessoes (
   token          uuid primary key default gen_random_uuid(),
   funcionario_id uuid not null references funcionarios (id) on delete cascade,
   criada_em      timestamptz not null default now(),
-  expira_em      timestamptz not null default now() + interval '12 hours'
+  expira_em      timestamptz not null default now() + interval '12 hours',
+  suporte_nome   text -- preenchido quando é o dono do sistema acessando para dar suporte
 );
 
 create table categorias (
@@ -186,6 +187,27 @@ create table comanda_itens (
   foreign key (empresa_id, produto_id) references produtos (empresa_id, id)
 );
 
+-- Donos do sistema (portal /admin). Ligado ao login por e-mail do Supabase Auth.
+create table super_admins (
+  user_id   uuid primary key references auth.users (id) on delete cascade,
+  nome      text not null,
+  criado_em timestamptz not null default now()
+);
+
+-- Quem fez o quê e quando.
+create table log_auditoria (
+  id         bigint generated always as identity primary key,
+  empresa_id uuid references empresas (id) on delete cascade,
+  quando     timestamptz not null default now(),
+  ator_tipo  text not null check (ator_tipo in ('funcionario', 'super_admin', 'suporte')),
+  ator_id    uuid,
+  ator_nome  text,
+  acao       text not null,
+  detalhes   jsonb not null default '{}'::jsonb
+);
+create index log_auditoria_empresa on log_auditoria (empresa_id, quando desc);
+create index log_auditoria_quando on log_auditoria (quando desc);
+
 -- ---------------------------------------------------------------------
 --  SEGURANÇA: ninguém acessa as tabelas direto, só pelas funções.
 -- ---------------------------------------------------------------------
@@ -202,6 +224,8 @@ alter table vendas            enable row level security;
 alter table venda_pagamentos  enable row level security;
 alter table comandas          enable row level security;
 alter table comanda_itens     enable row level security;
+alter table super_admins      enable row level security;
+alter table log_auditoria     enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
 revoke all on all sequences in schema public from anon, authenticated;
@@ -270,7 +294,9 @@ begin
         'enviar_cozinha', 'cancelar_comanda', 'transferir_mesa', 'mudar_status_comanda',
         'finalizar_conta', 'fechar_caixa', 'criar_funcionario', 'editar_funcionario', 'remover_funcionario',
         'configurar_empresa', 'definir_mesas', 'salvar_categoria', 'remover_categoria', 'mover_categoria',
-        'salvar_produto', 'remover_produto', 'relatorio'])
+        'salvar_produto', 'remover_produto', 'relatorio', '_log', '_log_admin', '_super_admin', '_hoje',
+        'admin_eu', 'admin_painel', 'admin_criar_empresa', 'admin_editar_empresa', 'admin_status_empresa',
+        'admin_funcionarios', 'admin_resetar_pin', 'admin_acessar_como', 'admin_relatorio', 'admin_auditoria'])
   loop
     execute 'drop function ' || r.assinatura;
   end loop;
@@ -451,6 +477,24 @@ begin
   end if;
 end $$;
 
+-- Registra uma ação no log de auditoria. Se a sessão for de suporte, o registro diz isso.
+create or replace function _log(p_token uuid, u funcionarios, p_acao text, p_detalhes jsonb default '{}'::jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_suporte text;
+begin
+  select suporte_nome into v_suporte from sessoes where token = p_token;
+  insert into log_auditoria (empresa_id, ator_tipo, ator_id, ator_nome, acao, detalhes)
+  values (
+    u.empresa_id,
+    case when v_suporte is null then 'funcionario' else 'suporte' end,
+    u.id,
+    case when v_suporte is null then u.nome else v_suporte || ' (suporte)' end,
+    p_acao,
+    coalesce(p_detalhes, '{}'::jsonb)
+  );
+end $$;
+
 -- ---------------------------------------------------------------------
 --  API (funções chamadas pelo site)
 -- ---------------------------------------------------------------------
@@ -502,6 +546,8 @@ begin
   if p_pin is null or f.pin_hash is distinct from crypt(p_pin, f.pin_hash) then
     if f.falhas_login + 1 >= 5 then
       update funcionarios set falhas_login = 0, bloqueado_ate = now() + interval '30 seconds' where id = f.id;
+      insert into log_auditoria (empresa_id, ator_tipo, ator_id, ator_nome, acao)
+      values (e.id, 'funcionario', f.id, f.nome, 'login_bloqueado');
       return jsonb_build_object('ok', false, 'erro', 'BLOQUEADO', 'segundos', 30);
     end if;
     update funcionarios set falhas_login = falhas_login + 1 where id = f.id;
@@ -512,6 +558,7 @@ begin
   update empresas set ultimo_acesso = now() where id = e.id;
   delete from sessoes where expira_em < now();
   insert into sessoes (funcionario_id) values (f.id) returning token into v_token;
+  perform _log(v_token, f, 'login');
   return jsonb_build_object('ok', true, 'token', v_token);
 end $$;
 
@@ -529,6 +576,7 @@ begin
   u := _sessao(p_token);
   return jsonb_build_object(
     'usuarioId', u.id,
+    'suporte', (select suporte_nome from sessoes where token = p_token),
     'empresa', _json_empresa(u.empresa_id),
     'mesas', _json_mesas(u.empresa_id),
     'cardapio', _json_cardapio(u.empresa_id),
@@ -685,6 +733,7 @@ begin
   returning mesa_numero into v_mesa;
   if v_mesa is not null then
     perform _liberar_se_vazia(u.empresa_id, v_mesa);
+    perform _log(p_token, u, 'pedido_cancelado', jsonb_build_object('mesa', v_mesa, 'comanda', p_comanda));
   end if;
   return estado(p_token);
 end $$;
@@ -878,6 +927,8 @@ begin
   from vendas where empresa_id = u.empresa_id and fechamento_id is null
   returning id into v_id;
   update vendas set fechamento_id = v_id where empresa_id = u.empresa_id and fechamento_id is null;
+  perform _log(p_token, u, 'caixa_fechado', (select jsonb_build_object('vendas', quantidade, 'total', total)
+                                              from fechamentos_caixa where id = v_id));
   return estado(p_token);
 end $$;
 
@@ -902,6 +953,7 @@ begin
   exception when unique_violation then
     raise exception 'NOME_REPETIDO';
   end;
+  perform _log(p_token, u, 'funcionario_criado', jsonb_build_object('nome', trim(p_nome), 'funcao', p_funcao));
   return estado(p_token);
 end $$;
 
@@ -952,6 +1004,10 @@ begin
   if p_ativo = false then
     delete from sessoes where funcionario_id = p_id;
   end if;
+  perform _log(p_token, u, 'funcionario_editado', jsonb_strip_nulls(jsonb_build_object(
+    'funcionario', (select nome from funcionarios where id = p_id),
+    'nome', p_nome, 'funcao', p_funcao, 'ativo', p_ativo,
+    'pin_trocado', case when p_pin is not null then true end)));
   return estado(p_token);
 end $$;
 
@@ -964,6 +1020,8 @@ begin
   if p_id = u.id then
     raise exception 'NAO_PODE_SI_MESMO';
   end if;
+  perform _log(p_token, u, 'funcionario_removido',
+               jsonb_build_object('nome', (select nome from funcionarios where id = p_id and empresa_id = u.empresa_id)));
   delete from funcionarios where id = p_id and empresa_id = u.empresa_id;
   if not exists (select 1 from funcionarios where empresa_id = u.empresa_id and funcao = 'admin' and ativo) then
     raise exception 'ULTIMO_ADMIN';
@@ -990,6 +1048,7 @@ begin
     nome = coalesce(trim(p_nome), nome),
     taxa_servico = coalesce(round(p_taxa, 3), taxa_servico)
   where id = u.empresa_id;
+  perform _log(p_token, u, 'restaurante_configurado', jsonb_strip_nulls(jsonb_build_object('nome', p_nome, 'taxa', p_taxa)));
   return estado(p_token);
 end $$;
 
@@ -1016,6 +1075,7 @@ begin
   select u.empresa_id, generate_series(1, p_quantidade)
   on conflict (empresa_id, numero) do nothing;
   update mesas set ativa = (numero <= p_quantidade) where empresa_id = u.empresa_id;
+  perform _log(p_token, u, 'mesas_definidas', jsonb_build_object('quantidade', p_quantidade));
   return estado(p_token);
 end $$;
 
@@ -1039,6 +1099,8 @@ begin
       raise exception 'CATEGORIA_INVALIDA';
     end if;
   end if;
+  perform _log(p_token, u, case when p_id is null then 'categoria_criada' else 'categoria_renomeada' end,
+               jsonb_build_object('nome', v_nome));
   return estado(p_token);
 end $$;
 
@@ -1052,6 +1114,10 @@ begin
     raise exception 'CATEGORIA_COM_PRODUTOS';
   end if;
   update categorias set ativa = false where empresa_id = u.empresa_id and id = p_id;
+  if found then
+    perform _log(p_token, u, 'categoria_removida',
+                 jsonb_build_object('nome', (select nome from categorias where empresa_id = u.empresa_id and id = p_id)));
+  end if;
   return estado(p_token);
 end $$;
 
@@ -1092,6 +1158,7 @@ language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
   v_nome text := trim(coalesce(p_nome, ''));
+  antes produtos;
 begin
   u := _sessao(p_token, array['admin']);
   if length(v_nome) not between 1 and 60 then
@@ -1106,11 +1173,20 @@ begin
   if p_id is null then
     insert into produtos (empresa_id, categoria_id, nome, preco)
     values (u.empresa_id, p_categoria, v_nome, round(p_preco, 2));
+    perform _log(p_token, u, 'produto_criado', jsonb_build_object('nome', v_nome, 'preco', round(p_preco, 2)));
   else
-    update produtos set categoria_id = p_categoria, nome = v_nome, preco = round(p_preco, 2)
-    where empresa_id = u.empresa_id and id = p_id and ativo;
+    select * into antes from produtos where empresa_id = u.empresa_id and id = p_id and ativo;
     if not found then
       raise exception 'PRODUTO_INVALIDO';
+    end if;
+    update produtos set categoria_id = p_categoria, nome = v_nome, preco = round(p_preco, 2)
+    where empresa_id = u.empresa_id and id = p_id;
+    if antes.preco <> round(p_preco, 2) then
+      perform _log(p_token, u, 'preco_alterado',
+                   jsonb_build_object('produto', v_nome, 'de', antes.preco, 'para', round(p_preco, 2)));
+    end if;
+    if antes.nome <> v_nome or antes.categoria_id <> p_categoria then
+      perform _log(p_token, u, 'produto_editado', jsonb_build_object('de', antes.nome, 'para', v_nome));
     end if;
   end if;
   return estado(p_token);
@@ -1123,7 +1199,10 @@ declare
   u funcionarios;
 begin
   u := _sessao(p_token, array['admin']);
-  update produtos set ativo = false where empresa_id = u.empresa_id and id = p_id;
+  update produtos set ativo = false where empresa_id = u.empresa_id and id = p_id and ativo;
+  if found then
+    perform _log(p_token, u, 'produto_removido', jsonb_build_object('nome', (select nome from produtos where id = p_id)));
+  end if;
   return estado(p_token);
 end $$;
 
@@ -1149,6 +1228,316 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------
+--  PORTAL DO DONO DO SISTEMA (super admin) — login por e-mail + 2FA
+--  (Supabase Auth). Só chamáveis por usuário logado ("authenticated").
+-- ---------------------------------------------------------------------
+
+-- Confere que quem chama é super admin. Por padrão exige o 2FA (nível "aal2").
+create or replace function _super_admin(p_exigir_2fa boolean default true) returns super_admins
+language plpgsql security definer set search_path = public as $$
+declare
+  a super_admins;
+begin
+  select * into a from super_admins where user_id = auth.uid();
+  if a.user_id is null then
+    raise exception 'SEM_PERMISSAO';
+  end if;
+  if p_exigir_2fa and coalesce(auth.jwt() ->> 'aal', '') <> 'aal2' then
+    raise exception 'MFA_NECESSARIO';
+  end if;
+  return a;
+end $$;
+
+-- Início do dia de hoje no horário de Brasília.
+create or replace function _hoje() returns timestamptz
+language sql stable as $$
+  select date_trunc('day', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo'
+$$;
+
+create or replace function _log_admin(a super_admins, p_empresa uuid, p_acao text, p_detalhes jsonb default '{}'::jsonb) returns void
+language sql security definer set search_path = public as $$
+  insert into log_auditoria (empresa_id, ator_tipo, ator_id, ator_nome, acao, detalhes)
+  values (p_empresa, 'super_admin', a.user_id, a.nome, p_acao, coalesce(p_detalhes, '{}'::jsonb));
+$$;
+
+-- Quem sou eu (não exige 2FA: a tela usa para saber se precisa pedir o código).
+create or replace function admin_eu() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  a super_admins;
+begin
+  a := _super_admin(false);
+  return jsonb_build_object('nome', a.nome, 'aal', coalesce(auth.jwt() ->> 'aal', 'aal1'));
+end $$;
+
+-- Todos os restaurantes com os números de hoje e do mês.
+create or replace function admin_painel() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_hoje timestamptz := _hoje();
+  v_mes timestamptz := date_trunc('month', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo';
+begin
+  perform _super_admin();
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', e.id, 'nome', e.nome, 'slug', e.slug, 'cnpj', e.cnpj, 'status', e.status, 'plano', e.plano,
+      'taxaServico', e.taxa_servico, 'criadaEm', _ms(e.criada_em), 'ultimoAcesso', _ms(e.ultimo_acesso),
+      'mesas', (select count(*) from mesas m where m.empresa_id = e.id and m.ativa),
+      'mesasAbertas', (select count(*) from mesas m where m.empresa_id = e.id and m.ativa and m.aberta_em is not null),
+      'emAberto', (select coalesce(sum(ci.preco * ci.qtd), 0) from comandas c
+                   join comanda_itens ci on ci.empresa_id = c.empresa_id and ci.comanda_id = c.id
+                   where c.empresa_id = e.id and c.venda_id is null),
+      'funcionarios', (select count(*) from funcionarios f where f.empresa_id = e.id and f.ativo),
+      'vendasHoje', (select coalesce(sum(total), 0) from vendas v where v.empresa_id = e.id and v.fechada_em >= v_hoje),
+      'contasHoje', (select count(*) from vendas v where v.empresa_id = e.id and v.fechada_em >= v_hoje),
+      'vendasMes', (select coalesce(sum(total), 0) from vendas v where v.empresa_id = e.id and v.fechada_em >= v_mes),
+      'contasMes', (select count(*) from vendas v where v.empresa_id = e.id and v.fechada_em >= v_mes)
+    ) order by e.nome)
+    from empresas e), '[]'::jsonb);
+end $$;
+
+-- Cria um restaurante novo com o primeiro admin (PIN provisório) e, se pedido,
+-- o cardápio copiado de outro restaurante (p_modelo = código do modelo).
+create or replace function admin_criar_empresa(
+  p_nome text, p_slug text, p_admin_nome text, p_admin_pin text,
+  p_cnpj text default null, p_plano text default 'gratis', p_taxa numeric default 0.10,
+  p_mesas int default 10, p_modelo text default null
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  a super_admins;
+  v_empresa uuid;
+  v_modelo uuid;
+  v_slug text := lower(trim(coalesce(p_slug, '')));
+begin
+  a := _super_admin();
+  if length(trim(coalesce(p_nome, ''))) not between 1 and 60 then
+    raise exception 'NOME_INVALIDO';
+  end if;
+  if v_slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$' or length(v_slug) not between 2 and 40 or v_slug in ('admin', 'r', 'api') then
+    raise exception 'CODIGO_INVALIDO';
+  end if;
+  if exists (select 1 from empresas where slug = v_slug) then
+    raise exception 'CODIGO_EM_USO';
+  end if;
+  if length(trim(coalesce(p_admin_nome, ''))) not between 1 and 40 then
+    raise exception 'NOME_INVALIDO';
+  end if;
+  perform _validar_pin(p_admin_pin);
+  if p_taxa is null or p_taxa < 0 or p_taxa > 0.3 then
+    raise exception 'TAXA_INVALIDA';
+  end if;
+  if p_mesas is null or p_mesas < 1 or p_mesas > 60 then
+    raise exception 'MESAS_INVALIDAS';
+  end if;
+  if p_modelo is not null then
+    select id into v_modelo from empresas where slug = lower(trim(p_modelo));
+    if v_modelo is null then
+      raise exception 'EMPRESA_INVALIDA';
+    end if;
+  end if;
+
+  insert into empresas (nome, slug, cnpj, plano, taxa_servico)
+  values (trim(p_nome), v_slug, nullif(trim(coalesce(p_cnpj, '')), ''), coalesce(nullif(trim(p_plano), ''), 'gratis'), round(p_taxa, 3))
+  returning id into v_empresa;
+
+  insert into funcionarios (empresa_id, nome, funcao, pin_hash, pin_padrao)
+  values (v_empresa, trim(p_admin_nome), 'admin', crypt(p_admin_pin, gen_salt('bf', 8)), true);
+
+  insert into mesas (empresa_id, numero) select v_empresa, generate_series(1, p_mesas);
+
+  if v_modelo is not null then
+    insert into categorias (empresa_id, id, nome, ordem)
+    select v_empresa, id, nome, ordem from categorias where empresa_id = v_modelo and ativa;
+    insert into produtos (empresa_id, categoria_id, nome, preco)
+    select v_empresa, p.categoria_id, p.nome, p.preco
+    from produtos p join categorias c on c.empresa_id = p.empresa_id and c.id = p.categoria_id
+    where p.empresa_id = v_modelo and p.ativo and c.ativa
+    order by p.id;
+  end if;
+
+  perform _log_admin(a, v_empresa, 'restaurante_criado',
+    jsonb_build_object('nome', trim(p_nome), 'codigo', v_slug, 'admin', trim(p_admin_nome), 'modelo', p_modelo));
+  return jsonb_build_object('id', v_empresa, 'slug', v_slug);
+end $$;
+
+create or replace function admin_editar_empresa(
+  p_id uuid, p_nome text default null, p_slug text default null, p_cnpj text default null,
+  p_plano text default null, p_taxa numeric default null
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  a super_admins;
+  antes empresas;
+  v_slug text := nullif(lower(trim(coalesce(p_slug, ''))), '');
+begin
+  a := _super_admin();
+  select * into antes from empresas where id = p_id;
+  if antes.id is null then
+    raise exception 'EMPRESA_INVALIDA';
+  end if;
+  if p_nome is not null and length(trim(p_nome)) not between 1 and 60 then
+    raise exception 'NOME_INVALIDO';
+  end if;
+  if v_slug is not null and (v_slug !~ '^[a-z0-9]+(-[a-z0-9]+)*$' or length(v_slug) not between 2 and 40 or v_slug in ('admin', 'r', 'api')) then
+    raise exception 'CODIGO_INVALIDO';
+  end if;
+  if v_slug is not null and exists (select 1 from empresas where slug = v_slug and id <> p_id) then
+    raise exception 'CODIGO_EM_USO';
+  end if;
+  if p_taxa is not null and (p_taxa < 0 or p_taxa > 0.3) then
+    raise exception 'TAXA_INVALIDA';
+  end if;
+  update empresas set
+    nome = coalesce(trim(p_nome), nome),
+    slug = coalesce(v_slug, slug),
+    cnpj = case when p_cnpj is null then cnpj else nullif(trim(p_cnpj), '') end,
+    plano = coalesce(nullif(trim(p_plano), ''), plano),
+    taxa_servico = coalesce(round(p_taxa, 3), taxa_servico)
+  where id = p_id;
+  perform _log_admin(a, p_id, 'restaurante_editado', jsonb_strip_nulls(jsonb_build_object(
+    'nome', p_nome, 'codigo', v_slug, 'cnpj', p_cnpj, 'plano', p_plano, 'taxa', p_taxa)));
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Ativa ou suspende. Suspender derruba na hora todas as sessões do restaurante.
+create or replace function admin_status_empresa(p_id uuid, p_status text, p_motivo text default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  a super_admins;
+begin
+  a := _super_admin();
+  if p_status not in ('ativa', 'suspensa') then
+    raise exception 'STATUS_INVALIDO';
+  end if;
+  update empresas set status = p_status where id = p_id;
+  if not found then
+    raise exception 'EMPRESA_INVALIDA';
+  end if;
+  if p_status = 'suspensa' then
+    delete from sessoes s using funcionarios f where f.id = s.funcionario_id and f.empresa_id = p_id;
+  end if;
+  perform _log_admin(a, p_id, case when p_status = 'ativa' then 'restaurante_ativado' else 'restaurante_suspenso' end,
+                     jsonb_strip_nulls(jsonb_build_object('motivo', nullif(trim(coalesce(p_motivo, '')), ''))));
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- Equipe de um restaurante (sem PIN), para o suporte.
+create or replace function admin_funcionarios(p_empresa uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _super_admin();
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', id, 'nome', nome, 'funcao', funcao, 'ativo', ativo, 'pinPadrao', pin_padrao,
+      'bloqueado', bloqueado_ate > now()) order by funcao <> 'admin', nome)
+    from funcionarios where empresa_id = p_empresa), '[]'::jsonb);
+end $$;
+
+-- Define um PIN provisório para um funcionário (ex.: admin que esqueceu o PIN).
+create or replace function admin_resetar_pin(p_funcionario uuid, p_pin text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  a super_admins;
+  f funcionarios;
+begin
+  a := _super_admin();
+  perform _validar_pin(p_pin);
+  select * into f from funcionarios where id = p_funcionario;
+  if f.id is null then
+    raise exception 'FUNCIONARIO_INVALIDO';
+  end if;
+  update funcionarios set pin_hash = crypt(p_pin, gen_salt('bf', 8)), pin_padrao = true,
+                          falhas_login = 0, bloqueado_ate = null, ativo = true
+  where id = p_funcionario;
+  delete from sessoes where funcionario_id = p_funcionario;
+  perform _log_admin(a, f.empresa_id, 'pin_resetado', jsonb_build_object('funcionario', f.nome));
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- "Acessar como": abre uma sessão de suporte (2 horas) como o admin do restaurante.
+-- A tela mostra uma faixa de suporte e tudo que for feito fica no log como suporte.
+create or replace function admin_acessar_como(p_empresa uuid, p_motivo text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  a super_admins;
+  e empresas;
+  f funcionarios;
+  v_token uuid;
+begin
+  a := _super_admin();
+  if length(trim(coalesce(p_motivo, ''))) < 3 then
+    raise exception 'MOTIVO_OBRIGATORIO';
+  end if;
+  select * into e from empresas where id = p_empresa;
+  if e.id is null then
+    raise exception 'EMPRESA_INVALIDA';
+  end if;
+  if e.status <> 'ativa' then
+    raise exception 'EMPRESA_SUSPENSA';
+  end if;
+  select * into f from funcionarios
+  where empresa_id = p_empresa and funcao = 'admin' and ativo order by criado_em limit 1;
+  if f.id is null then
+    raise exception 'SEM_ADMIN';
+  end if;
+  insert into sessoes (funcionario_id, expira_em, suporte_nome)
+  values (f.id, now() + interval '2 hours', a.nome)
+  returning token into v_token;
+  perform _log_admin(a, p_empresa, 'suporte_iniciado', jsonb_build_object('motivo', trim(p_motivo)));
+  return jsonb_build_object('token', v_token, 'slug', e.slug, 'nome', e.nome);
+end $$;
+
+-- Relatório de todos os restaurantes no período.
+create or replace function admin_relatorio(p_de timestamptz, p_ate timestamptz) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _super_admin();
+  return jsonb_build_object(
+    'empresas', coalesce((
+      select jsonb_agg(x order by (x ->> 'total')::numeric desc) from (
+        select jsonb_build_object('id', e.id, 'nome', e.nome, 'slug', e.slug, 'status', e.status,
+          'quantidade', count(v.id), 'total', coalesce(sum(v.total), 0), 'taxas', coalesce(sum(v.taxa), 0)) as x
+        from empresas e left join vendas v on v.empresa_id = e.id and v.fechada_em between p_de and p_ate
+        group by e.id) t), '[]'::jsonb),
+    'porDia', coalesce((
+      select jsonb_agg(jsonb_build_object('dia', dia, 'total', total, 'quantidade', quantidade) order by dia) from (
+        select to_char(v.fechada_em at time zone 'America/Sao_Paulo', 'YYYY-MM-DD') as dia,
+               sum(v.total) as total, count(*) as quantidade
+        from vendas v where v.fechada_em between p_de and p_ate group by 1) d), '[]'::jsonb),
+    'porForma', coalesce((
+      select jsonb_object_agg(forma, valor) from (
+        select vp.forma,
+               sum(vp.valor) - case when vp.forma = 'dinheiro'
+                 then coalesce((select sum(troco) from vendas where fechada_em between p_de and p_ate), 0) else 0 end as valor
+        from venda_pagamentos vp join vendas v on v.empresa_id = vp.empresa_id and v.id = vp.venda_id
+        where v.fechada_em between p_de and p_ate
+        group by vp.forma) f), '{}'::jsonb)
+  );
+end $$;
+
+-- Log de auditoria (mais recentes primeiro). Filtros opcionais por restaurante e período.
+create or replace function admin_auditoria(
+  p_empresa uuid default null, p_de timestamptz default null, p_ate timestamptz default null, p_limite int default 300
+) returns jsonb
+language plpgsql security definer set search_path = public as $$
+begin
+  perform _super_admin();
+  return coalesce((
+    select jsonb_agg(jsonb_build_object(
+      'id', l.id, 'quando', _ms(l.quando), 'empresa', e.nome, 'empresaId', l.empresa_id,
+      'atorTipo', l.ator_tipo, 'ator', l.ator_nome, 'acao', l.acao, 'detalhes', l.detalhes) order by l.quando desc)
+    from (
+      select * from log_auditoria
+      where (p_empresa is null or empresa_id = p_empresa)
+        and (p_de is null or quando >= p_de)
+        and (p_ate is null or quando <= p_ate)
+      order by quando desc
+      limit least(greatest(coalesce(p_limite, 300), 1), 1000)
+    ) l left join empresas e on e.id = l.empresa_id), '[]'::jsonb);
+end $$;
+
+-- ---------------------------------------------------------------------
 --  PERMISSÕES DAS FUNÇÕES
 -- ---------------------------------------------------------------------
 
@@ -1163,6 +1552,12 @@ grant execute on function
   configurar_empresa, definir_mesas, salvar_categoria, remover_categoria, mover_categoria, salvar_produto, remover_produto,
   relatorio
 to anon, authenticated;
+
+-- Portal do dono do sistema: só para quem fez login por e-mail (e cada função confere se é super admin).
+grant execute on function
+  admin_eu, admin_painel, admin_criar_empresa, admin_editar_empresa, admin_status_empresa,
+  admin_funcionarios, admin_resetar_pin, admin_acessar_como, admin_relatorio, admin_auditoria
+to authenticated;
 
 -- =====================================================================
 --  FUNÇÕES (fim do bloco que as migrações também aplicam)

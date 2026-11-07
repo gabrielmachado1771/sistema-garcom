@@ -14,7 +14,7 @@ const ABAS = [
 ];
 
 export default function Layout({ areaAtual, navegar, children }) {
-  const { usuario, sair, mesas, modo, conexao } = useRestaurante();
+  const { usuario, sair, mesas, modo, conexao, suporte, empresa } = useRestaurante();
   const abas = ABAS.filter((a) => podeAcessar(usuario, a.area));
   const contadores = {
     garcom: comandasNaCozinha(mesas, "pronto").length,
@@ -23,7 +23,27 @@ export default function Layout({ areaAtual, navegar, children }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white">
-      <header className="sticky top-0 z-30 bg-zinc-950/85 backdrop-blur border-b border-zinc-800">
+      {suporte && (
+        <div
+          role="status"
+          className="sticky top-0 z-40 bg-yellow-400 text-black text-sm px-4 py-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-center"
+        >
+          <span>
+            🛟 <b>Modo suporte</b> em {empresa?.nome} · aberto por {suporte} · tudo o que for feito fica registrado
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              sair();
+              window.location.hash = "#/admin";
+            }}
+            className="px-3 py-1 rounded-lg bg-black/80 text-yellow-300 font-semibold text-xs"
+          >
+            Encerrar suporte
+          </button>
+        </div>
+      )}
+      <header className={`sticky ${suporte ? "top-9" : "top-0"} z-30 bg-zinc-950/85 backdrop-blur border-b border-zinc-800`}>
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
           <span className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center shrink-0" aria-hidden>
             🍽
