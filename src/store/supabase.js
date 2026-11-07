@@ -34,6 +34,9 @@ const MENSAGENS = {
   STATUS_INVALIDO: "Status inválido.",
   PAGAMENTO_INVALIDO: "Forma de pagamento inválida.",
   VALOR_INSUFICIENTE: "O valor recebido é menor que o total.",
+  EMPRESA_INVALIDA: "Restaurante não encontrado. Confira o código.",
+  EMPRESA_SUSPENSA: "Este restaurante está suspenso. Fale com o suporte.",
+  TAXA_INVALIDA: "A taxa de serviço precisa ficar entre 0% e 30%.",
   MESA_OCUPADA: "Não dá para tirar mesas que estão ocupadas. Feche a conta delas antes.",
   MESA_VAZIA: "Essa mesa não tem nada para transferir.",
   MESAS_INVALIDAS: "Quantidade de mesas inválida.",
@@ -74,6 +77,8 @@ export function acaoParaRpc(acao) {
       ];
     case "TRANSFERIR_MESA":
       return ["transferir_mesa", { p_origem: acao.origemId, p_destino: acao.destinoId }];
+    case "CONFIGURAR_EMPRESA":
+      return ["configurar_empresa", { p_nome: vazioParaNull(acao.nome), p_taxa: vazioParaNull(acao.taxa) }];
     case "DEFINIR_MESAS":
       return ["definir_mesas", { p_quantidade: acao.quantidade }];
     case "SALVAR_CATEGORIA":

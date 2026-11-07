@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { RestauranteContext, useAviso } from "./contexto";
 import { estadoInicial, migrar, reducer, verificarPin } from "./regras";
 import { acaoParaRpc, ehErroDeRede, MODO, rpc, supabase, traduzirErro } from "./supabase";
+import { normalizarCodigo } from "../utils/codigo";
 
 const CHAVE_DADOS = "sistema-garcom:dados";
 const CHAVES_ANTIGAS = ["sistema-garcom:v2"];
 const CHAVE_SESSAO_LOCAL = "sistema-garcom:sessao";
 const CHAVE_SESSAO_NUVEM = "sistema-garcom:token";
+const CHAVE_RESTAURANTE = "sistema-garcom:restaurante"; // código do último restaurante usado neste aparelho
 const INTERVALO_ATUALIZACAO = 10000;
 
 
@@ -29,6 +31,23 @@ function gravarSessao(chave, valor) {
   }
 }
 
+function lerLocal(chave) {
+  try {
+    return localStorage.getItem(chave);
+  } catch {
+    return null;
+  }
+}
+
+function gravarLocal(chave, valor) {
+  try {
+    if (valor) localStorage.setItem(chave, valor);
+    else localStorage.removeItem(chave);
+  } catch {
+    // storage bloqueado
+  }
+}
+
 /** Ações disponíveis para as telas — iguais nos dois modos. */
 function criarAcoes(executar, assinatura) {
   return {
@@ -39,6 +58,7 @@ function criarAcoes(executar, assinatura) {
       executar({ type: "OBSERVACAO_ITEM", mesaId, produtoId, obsAntiga, obs, qtd }),
     transferirMesa: (origemId, destinoId) => executar({ type: "TRANSFERIR_MESA", origemId, destinoId }),
     definirMesas: (quantidade) => executar({ type: "DEFINIR_MESAS", quantidade }),
+    configurarEmpresa: (dados) => executar({ type: "CONFIGURAR_EMPRESA", ...dados }),
     salvarCategoria: (dados) => executar({ type: "SALVAR_CATEGORIA", ...dados }),
     removerCategoria: (id) => executar({ type: "REMOVER_CATEGORIA", id }),
     moverCategoria: (id, direcao) => executar({ type: "MOVER_CATEGORIA", id, direcao }),
@@ -147,6 +167,9 @@ function ProviderLocal({ children }) {
       modo: "local",
       conexao: "online",
       carregando: false,
+      restaurante: null,
+      definirRestaurante: async () => ({ ok: true }),
+      esquecerRestaurante: () => {},
       usuario,
       funcionariosLogin,
       buscarRelatorio,
@@ -167,6 +190,8 @@ function ProviderNuvem({ children }) {
   const aviso = useAviso();
   const [state, dispatch] = useReducer(reducer, null);
   const [token, setToken] = useState(() => lerSessao(CHAVE_SESSAO_NUVEM));
+  const [restaurante, setRestaurante] = useState(() => lerLocal(CHAVE_RESTAURANTE));
+  const [empresaLogin, setEmpresaLogin] = useState(null); // { nome, slug, ativa } na tela de login
   const [funcionariosLogin, setFuncionariosLogin] = useState(null);
   const [conexao, setConexao] = useState("online");
   const pendentes = useRef(0); // envios ainda não confirmados pelo banco
@@ -182,7 +207,14 @@ function ProviderNuvem({ children }) {
   // Só aplica a resposta do banco quando não há outro envio no caminho,
   // para não "voltar no tempo" a tela enquanto a pessoa ainda está clicando.
   const aplicar = useCallback((dados) => {
-    if (dados && pendentes.current === 0) dispatch({ type: "SINCRONIZAR", state: { versao: 4, ...dados } });
+    if (!dados) return;
+    // Lembra o restaurante desta sessão (ex.: sessões abertas antes do multiempresa).
+    const slug = dados.empresa?.slug;
+    if (slug) {
+      gravarLocal(CHAVE_RESTAURANTE, slug);
+      setRestaurante((atual) => (atual === slug ? atual : slug));
+    }
+    if (pendentes.current === 0) dispatch({ type: "SINCRONIZAR", state: { versao: 4, ...dados } });
   }, []);
 
   const tratarErro = useCallback(
@@ -232,36 +264,81 @@ function ProviderNuvem({ children }) {
       atraso = setTimeout(recarregar, 250);
     };
 
-    canal.current = supabase
-      .channel("restaurante", { config: { broadcast: { self: false } } })
-      .on("broadcast", { event: "mudou" }, recarregarEmBreve)
-      .subscribe();
-
     const intervalo = setInterval(recarregar, INTERVALO_ATUALIZACAO);
     const aoVoltar = () => document.visibilityState === "visible" && recarregar();
     document.addEventListener("visibilitychange", aoVoltar);
     window.addEventListener("online", recarregar);
+
+    window.addEventListener("restaurante:mudou", recarregarEmBreve);
 
     return () => {
       clearTimeout(atraso);
       clearInterval(intervalo);
       document.removeEventListener("visibilitychange", aoVoltar);
       window.removeEventListener("online", recarregar);
-      supabase.removeChannel(canal.current);
-      canal.current = null;
+      window.removeEventListener("restaurante:mudou", recarregarEmBreve);
     };
   }, [token, recarregar]);
 
+  // Tempo real: um canal por restaurante, com nome secreto que só chega a quem fez login.
+  // A mensagem não leva dados — só avisa "algo mudou"; os dados vêm pelas funções com token.
+  const nomeCanal = token && state?.empresa?.canal ? `restaurante-${state.empresa.canal}` : null;
+  useEffect(() => {
+    if (!nomeCanal) return;
+    canal.current = supabase
+      .channel(nomeCanal, { config: { broadcast: { self: false } } })
+      .on("broadcast", { event: "mudou" }, () => window.dispatchEvent(new Event("restaurante:mudou")))
+      .subscribe();
+    return () => {
+      supabase.removeChannel(canal.current);
+      canal.current = null;
+    };
+  }, [nomeCanal]);
+
   // Lista de nomes da tela de login.
   const carregarLogin = useCallback(async () => {
+    if (!restaurante) {
+      setEmpresaLogin(null);
+      setFuncionariosLogin([]);
+      return;
+    }
     try {
-      setFuncionariosLogin(await rpc("listar_funcionarios_login"));
+      const [empresa, lista] = await Promise.all([
+        rpc("empresa_publica", { p_empresa: restaurante }),
+        rpc("listar_funcionarios_login", { p_empresa: restaurante }),
+      ]);
+      setEmpresaLogin(empresa);
+      setFuncionariosLogin(lista);
       setConexao("online");
     } catch (e) {
       tratarErro(e, { silencioso: true });
       setFuncionariosLogin((atual) => atual ?? []);
     }
-  }, [tratarErro]);
+  }, [tratarErro, restaurante]);
+
+  /** Escolhe o restaurante pelo código/link. Confere no banco antes. */
+  const definirRestaurante = useCallback(async (codigo) => {
+    const slug = normalizarCodigo(codigo);
+    if (!slug) return { ok: false, erro: "EMPRESA_INVALIDA" };
+    try {
+      const empresa = await rpc("empresa_publica", { p_empresa: slug });
+      if (!empresa) return { ok: false, erro: "EMPRESA_INVALIDA" };
+      if (!empresa.ativa) return { ok: false, erro: "EMPRESA_SUSPENSA" };
+      gravarLocal(CHAVE_RESTAURANTE, slug);
+      setEmpresaLogin(empresa);
+      setFuncionariosLogin(null);
+      setRestaurante(slug);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, erro: ehErroDeRede(e) ? "SEM_CONEXAO" : "ERRO" };
+    }
+  }, []);
+
+  const esquecerRestaurante = useCallback(() => {
+    gravarLocal(CHAVE_RESTAURANTE, null);
+    setRestaurante(null);
+    setEmpresaLogin(null);
+  }, []);
 
   useEffect(() => {
     if (token) return;
@@ -311,13 +388,13 @@ function ProviderNuvem({ children }) {
 
   const entrar = useCallback(async (id, pin) => {
     try {
-      const r = await rpc("entrar", { p_id: id, p_pin: pin });
+      const r = await rpc("entrar", { p_empresa: restaurante, p_id: id, p_pin: pin });
       if (r.ok) setToken(r.token);
       return r;
     } catch (e) {
       return { ok: false, erro: ehErroDeRede(e) ? "SEM_CONEXAO" : "ERRO" };
     }
-  }, []);
+  }, [restaurante]);
 
   const sair = useCallback(() => {
     const t = tokenRef.current;
@@ -359,15 +436,34 @@ function ProviderNuvem({ children }) {
       ...acoes,
       modo: "nuvem",
       conexao,
-      carregando: (!!token && !state) || (!token && funcionariosLogin === null),
+      empresa: state?.empresa ?? empresaLogin,
+      carregando: (!!token && !state) || (!token && !!restaurante && funcionariosLogin === null),
       usuario,
       funcionariosLogin: funcionariosLogin ?? [],
       recarregarLogin: carregarLogin,
+      restaurante,
+      definirRestaurante,
+      esquecerRestaurante,
       buscarRelatorio,
       entrar,
       sair,
     }),
-    [state, acoes, conexao, token, usuario, funcionariosLogin, carregarLogin, buscarRelatorio, entrar, sair]
+    [
+      state,
+      acoes,
+      conexao,
+      token,
+      usuario,
+      empresaLogin,
+      funcionariosLogin,
+      carregarLogin,
+      restaurante,
+      definirRestaurante,
+      esquecerRestaurante,
+      buscarRelatorio,
+      entrar,
+      sair,
+    ]
   );
 
   return <RestauranteContext.Provider value={valor}>{children}</RestauranteContext.Provider>;

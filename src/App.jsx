@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import useHashRoute from "./hooks/useHashRoute";
 import RestauranteProvider from "./store/RestauranteProvider";
 import AvisosProvider from "./components/Avisos";
@@ -39,28 +39,93 @@ function Pagina({ area, param, navegar }) {
   }
 }
 
+/** Link do restaurante (#/r/<codigo>): escolhe o restaurante e vai para o login dele. */
+function EntradaPorLink({ codigo, navegar }) {
+  const { definirRestaurante, restaurante, usuario, empresa, sair, modo } = useRestaurante();
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    let ativo = true;
+    (async () => {
+      if (modo === "local") return navegar();
+      // Já logado em outro restaurante neste aparelho: sai antes de trocar.
+      if (usuario && empresa?.slug && empresa.slug !== codigo) sair();
+      if (restaurante === codigo && (!usuario || empresa?.slug === codigo)) return navegar();
+      const r = await definirRestaurante(codigo);
+      if (!ativo) return;
+      if (r.ok) navegar();
+      else setErro(r.erro);
+    })();
+    return () => {
+      ativo = false;
+    };
+    // roda só quando o link muda
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codigo]);
+
+  if (!erro) return <Carregando texto="Abrindo o restaurante…" />;
+  return (
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center gap-4 p-6 text-center">
+      <p className="text-4xl" aria-hidden>
+        🍽
+      </p>
+      <p className="text-lg font-semibold">
+        {erro === "EMPRESA_SUSPENSA"
+          ? "Este restaurante está suspenso."
+          : erro === "EMPRESA_INVALIDA"
+            ? "Restaurante não encontrado."
+            : "Sem conexão com o servidor."}
+      </p>
+      <p className="text-sm text-zinc-400">
+        {erro === "EMPRESA_INVALIDA" || erro === "EMPRESA_SUSPENSA"
+          ? "Confira o link com o administrador do restaurante."
+          : "Confira a internet e tente de novo."}
+      </p>
+      <div className="flex gap-2">
+        {erro !== "EMPRESA_INVALIDA" && erro !== "EMPRESA_SUSPENSA" && (
+          <button type="button" onClick={() => window.location.reload()} className="px-4 py-2 rounded-xl bg-orange-500 text-black font-semibold">
+            Tentar de novo
+          </button>
+        )}
+        <button type="button" onClick={() => navegar()} className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700">
+          Digitar o código
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Carregando({ texto }) {
+  return (
+    <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center gap-3 text-zinc-400">
+      <span className="w-10 h-10 border-4 border-zinc-700 border-t-orange-500 rounded-full animate-spin" />
+      <p className="text-sm">{texto}</p>
+    </div>
+  );
+}
+
 function Rotas() {
-  const { usuario, carregando } = useRestaurante();
+  const { usuario, carregando, empresa } = useRestaurante();
   const [[tela, param], navegar] = useHashRoute();
   const area = tela || "painel";
   const permitido = podeAcessar(usuario, area);
 
+  // Nome do restaurante na aba do navegador.
+  useEffect(() => {
+    document.title = empresa?.nome ? `${empresa.nome} · Sistema Restaurante` : "Sistema Restaurante";
+  }, [empresa?.nome]);
+
   // Funcionário só enxerga a própria área: qualquer outra rota volta para ela.
   useEffect(() => {
+    if (tela === "r") return;
     if (usuario && !permitido) {
       const inicial = areaInicial(usuario);
       navegar(inicial === "painel" ? undefined : inicial);
     }
-  }, [usuario, permitido, navegar]);
+  }, [usuario, permitido, navegar, tela]);
 
-  if (carregando) {
-    return (
-      <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center gap-3 text-zinc-400">
-        <span className="w-10 h-10 border-4 border-zinc-700 border-t-orange-500 rounded-full animate-spin" />
-        <p className="text-sm">Conectando ao banco de dados…</p>
-      </div>
-    );
-  }
+  if (tela === "r" && param) return <EntradaPorLink codigo={param} navegar={navegar} />;
+  if (carregando) return <Carregando texto="Conectando ao banco de dados…" />;
   if (!usuario) return <Login />;
   if (!permitido) return null;
 

@@ -4,6 +4,74 @@ import { FUNCOES } from "../store/regras";
 import { PIN_PADRAO_ADMIN, PIN_TAMANHO } from "../utils/pin";
 import { Avatar } from "../components/ui";
 import BotaoInstalar from "../components/BotaoInstalar";
+import { classeInput } from "../utils/estilos";
+
+const ERROS_RESTAURANTE = {
+  EMPRESA_INVALIDA: "Não encontramos esse restaurante. Confira o código.",
+  EMPRESA_SUSPENSA: "Este restaurante está suspenso. Fale com o suporte.",
+  SEM_CONEXAO: "Sem conexão com o servidor. Tente de novo.",
+  ERRO: "Não foi possível verificar agora. Tente de novo.",
+};
+
+/** Primeiro passo no aparelho: informar de qual restaurante é. */
+function CodigoRestaurante() {
+  const { definirRestaurante } = useRestaurante();
+  const [codigo, setCodigo] = useState("");
+  const [erro, setErro] = useState("");
+  const [verificando, setVerificando] = useState(false);
+
+  async function enviar(e) {
+    e.preventDefault();
+    if (!codigo.trim()) return;
+    setVerificando(true);
+    setErro("");
+    const r = await definirRestaurante(codigo);
+    setVerificando(false);
+    if (!r.ok) setErro(ERROS_RESTAURANTE[r.erro] ?? ERROS_RESTAURANTE.ERRO);
+  }
+
+  return (
+    <form onSubmit={enviar} className="space-y-4">
+      <div className="text-center">
+        <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-orange-500/20">
+          <span className="text-2xl" aria-hidden>
+            🍽
+          </span>
+        </div>
+        <h1 className="text-2xl font-bold text-orange-500">Sistema Restaurante</h1>
+        <p className="text-zinc-400 text-sm">De qual restaurante você é?</p>
+      </div>
+      <label className="block">
+        <span className="text-xs font-semibold text-zinc-400">Código do restaurante</span>
+        <input
+          autoFocus
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          placeholder="ex.: sobradinho"
+          value={codigo}
+          onChange={(e) => setCodigo(e.target.value)}
+          className={`${classeInput} mt-1 text-base`}
+        />
+      </label>
+      {erro && (
+        <p className="text-sm text-red-400" role="alert">
+          {erro}
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={verificando || !codigo.trim()}
+        className="w-full py-3 rounded-xl bg-orange-500 hover:bg-orange-400 text-black font-semibold transition disabled:opacity-40"
+      >
+        {verificando ? "Verificando…" : "Continuar"}
+      </button>
+      <p className="text-xs text-zinc-500 text-center">
+        Peça o código ou o link ao administrador do restaurante. Este aparelho vai lembrar.
+      </p>
+    </form>
+  );
+}
 
 const MAX_TENTATIVAS = 5;
 const BLOQUEIO_SEG = 30;
@@ -136,7 +204,8 @@ function TecladoPin({ funcionario, onVoltar, onEntrar }) {
 }
 
 export default function Login() {
-  const { funcionariosLogin, entrar, modo, conexao, recarregarLogin } = useRestaurante();
+  const { funcionariosLogin, entrar, modo, conexao, recarregarLogin, restaurante, empresa, esquecerRestaurante } =
+    useRestaurante();
   const [selecionadoId, setSelecionadoId] = useState(null);
   const ativos = funcionariosLogin;
   const selecionado = ativos.find((f) => f.id === selecionadoId);
@@ -148,7 +217,9 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white flex items-center justify-center px-4 py-8">
       <main className="bg-zinc-900/80 backdrop-blur p-6 sm:p-8 rounded-3xl shadow-2xl w-full max-w-md border border-zinc-800 animate-entrada">
-        {selecionado ? (
+        {modo === "nuvem" && !restaurante ? (
+          <CodigoRestaurante />
+        ) : selecionado ? (
           <TecladoPin
             key={selecionado.id}
             funcionario={selecionado}
@@ -161,8 +232,13 @@ export default function Login() {
               <div className="w-14 h-14 bg-orange-500 rounded-2xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-orange-500/20">
                 <span className="text-2xl" aria-hidden>🍽</span>
               </div>
-              <h1 className="text-2xl font-bold text-orange-500">Sistema Restaurante</h1>
+              <h1 className="text-2xl font-bold text-orange-500">{empresa?.nome ?? "Sistema Restaurante"}</h1>
               <p className="text-zinc-400 text-sm">Quem está entrando?</p>
+              {modo === "nuvem" && (
+                <button type="button" onClick={esquecerRestaurante} className="text-xs text-zinc-500 hover:text-white underline mt-1">
+                  Não é este restaurante? Trocar
+                </button>
+              )}
               <p className="text-[11px] text-zinc-600 mt-1">
                 {modo === "nuvem" ? "☁️ Conectado ao banco de dados" : "💾 Modo local (dados só neste navegador)"}
               </p>
@@ -206,7 +282,8 @@ export default function Login() {
             {adminComPinPadrao && (
               <p className="mt-6 text-xs text-zinc-400 bg-zinc-800/60 rounded-xl p-3 text-center">
                 Primeiro acesso: entre como <b className="text-white">{adminComPinPadrao.nome}</b> com o PIN{" "}
-                <b className="text-orange-400">{PIN_PADRAO_ADMIN}</b> e cadastre sua equipe em <b>Equipe</b>.
+                {modo === "local" ? <b className="text-orange-400">{PIN_PADRAO_ADMIN}</b> : "provisório que você recebeu"}, troque-o
+                e cadastre sua equipe em <b>Equipe</b>.
               </p>
             )}
           </>

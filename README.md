@@ -1,10 +1,11 @@
 # Sistema Garçom 🍽
 
-Sistema de restaurante com três ambientes: **Garçom**, **Cozinha** e **Caixa**.
-Feito com React 19 + Vite + Tailwind CSS 4.
+Sistema de restaurante **multiempresa**: vários restaurantes usam o mesmo sistema e cada um
+vê só os próprios dados. Três ambientes: **Garçom**, **Cozinha** e **Caixa**, mais a área do administrador.
+Feito com React 19 + Vite + Tailwind CSS 4 + Supabase (PostgreSQL).
 
-🌐 **Acesse online:** https://gabrielmachado1771.github.io/sistema-garcom/
-(publicado automaticamente pelo GitHub Pages a cada push na `main`)
+🌐 **Acesse online:** https://gabrielmachado1771.github.io/sistema-garcom/ (GitHub Pages)
+— a hospedagem principal passa a ser a **Vercel** (veja [Hospedagem](#hospedagem)).
 
 ## Como rodar
 
@@ -17,7 +18,14 @@ npm run lint
 
 ## Acesso e funções
 
-Cada pessoa entra escolhendo seu nome e digitando um **PIN de 4 números**.
+Cada restaurante tem um **código** (ex.: `sobradinho`) e um link próprio:
+
+- Vercel: `https://<seu-site>.vercel.app/r/<codigo>`
+- GitHub Pages: `https://gabrielmachado1771.github.io/sistema-garcom/#/r/<codigo>`
+
+Sem o link, a tela de login pede o código do restaurante (o aparelho lembra o último usado).
+Depois, cada pessoa toca no seu nome e digita o seu **PIN de 4 números**.
+O administrador encontra o link para mandar à equipe no **Painel → Restaurante → Copiar**.
 
 | Função | Acessa |
 |---|---|
@@ -26,7 +34,8 @@ Cada pessoa entra escolhendo seu nome e digitando um **PIN de 4 números**.
 | 👨‍🍳 Cozinha | Só a fila de pedidos |
 | 💰 Caixa | Só contas, pagamentos e histórico |
 
-**Primeiro acesso:** entre como *Administrador* com o PIN `1234`, troque o PIN e cadastre a equipe na aba **Equipe**.
+**Primeiro acesso:** o administrador entra com o PIN provisório que recebeu, troca o PIN e cadastra
+a equipe na aba **Equipe**. No Painel ele também define a taxa de serviço (0% a 30%) e o número de mesas.
 
 O login vale por aba: dá para ter o garçom numa aba e a cozinha em outra, cada uma com seu usuário.
 
@@ -74,13 +83,17 @@ O sistema funciona em dois modos:
 
 | Modo | Quando | Onde ficam os dados |
 |---|---|---|
-| ☁️ **Nuvem** | `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` configuradas | PostgreSQL no Supabase — todos os aparelhos veem os mesmos dados em tempo real |
-| 💾 **Local** | sem configuração | `localStorage` do navegador |
+| ☁️ **Nuvem** | `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY` configuradas | PostgreSQL no Supabase — multiempresa, todos os aparelhos do restaurante veem os mesmos dados em tempo real |
+| 💾 **Local** | sem configuração | `localStorage` do navegador — demonstração de um restaurante só |
 
 ### Modelo de dados
 
 ```mermaid
 erDiagram
+    empresas ||--o{ funcionarios : "tem"
+    empresas ||--o{ mesas : "tem"
+    empresas ||--o{ categorias : "tem"
+    empresas ||--o{ vendas : "tem"
     funcionarios ||--o{ sessoes : "faz login"
     funcionarios ||--o{ mesas : "atende"
     funcionarios ||--o{ comandas : "envia"
@@ -127,10 +140,24 @@ erDiagram
       numeric valor }
 ```
 
+Todas as tabelas têm a coluna `empresa_id` (o restaurante). As chaves são por restaurante
+(ex.: cada restaurante tem a sua "mesa 1") e as ligações entre tabelas incluem a empresa,
+então o próprio banco impede que um pedido aponte para a mesa ou o produto de outro restaurante.
+
 **Segurança:** todas as tabelas têm RLS ligado e nenhum acesso direto. O site só chama
-**funções no banco** (`entrar`, `estado`, `adicionar_item`, `enviar_cozinha`, `finalizar_conta`, …),
-e cada função confere o token da sessão e a função do funcionário — um garçom não consegue,
-por exemplo, fechar conta nem cadastrar funcionário, mesmo chamando a API na mão.
+**funções no banco** (`entrar`, `estado`, `adicionar_item`, `enviar_cozinha`, `finalizar_conta`, …).
+Cada função confere o token da sessão e a função do funcionário, e **descobre o restaurante pela
+sessão** — nenhuma função aceita o restaurante vindo do site. Um garçom não consegue fechar conta
+nem cadastrar funcionário, e ninguém consegue ver ou alterar dados de outro restaurante, mesmo
+chamando a API na mão. Restaurante suspenso tem as sessões bloqueadas na hora.
+
+O tempo real usa um canal por restaurante, com nome secreto entregue só depois do login;
+a mensagem não leva dados (só avisa "algo mudou").
+
+**Testes de isolamento:** [`supabase/testes/isolamento.sql`](supabase/testes/isolamento.sql) cria dois
+restaurantes de teste e tenta, por todas as funções, fazer um enxergar ou alterar o outro.
+Pode ser rodado em qualquer banco (tudo é desfeito no final); termina sem erro se estiver tudo isolado.
+
 Tudo está em [`supabase/schema.sql`](supabase/schema.sql).
 
 ### Como configurar
@@ -144,19 +171,32 @@ na ordem, pelo mesmo SQL Editor (elas não apagam dados):
 
 - [`supabase/migracao-01-pagamento-dividido.sql`](supabase/migracao-01-pagamento-dividido.sql): pagamento dividido em várias formas.
 - [`supabase/migracao-02-cardapio-mesas-relatorios.sql`](supabase/migracao-02-cardapio-mesas-relatorios.sql): observação por item, transferir mesas, quantidade de mesas, cardápio editável e relatórios.
+- [`supabase/migracao-03-multiempresa.sql`](supabase/migracao-03-multiempresa.sql): multiempresa. Os dados existentes viram o primeiro restaurante. Faça um backup antes.
 
 3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
 4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.
-5. Para o site do GitHub Pages: no repositório, **Settings → Secrets and variables → Actions → Variables**,
-   crie `SUPABASE_URL` e `SUPABASE_ANON_KEY` e rode o deploy de novo (ou faça um push).
+5. Para o site publicado, configure as mesmas duas variáveis na hospedagem (veja abaixo).
 
 A chave *publishable/anon* é feita para ficar no navegador; quem protege os dados são as regras do banco.
+**Nunca** use a chave `service_role` no site.
+
+## Hospedagem
+
+**Vercel (principal):** importe o repositório do GitHub em [vercel.com](https://vercel.com) → *Add New → Project*.
+O [`vercel.json`](vercel.json) já configura o build e as rotas (`/r/<codigo>` funciona direto).
+Em *Settings → Environment Variables* crie `VITE_SUPABASE_URL` e `VITE_SUPABASE_ANON_KEY`.
+Cada push na `main` publica sozinho.
+
+**GitHub Pages (continua funcionando):** o workflow [`deploy.yml`](.github/workflows/deploy.yml) publica a cada push.
+As variáveis ficam em **Settings → Secrets and variables → Actions → Variables** (`SUPABASE_URL` e `SUPABASE_ANON_KEY`).
+No GitHub Pages o link do restaurante usa `#`: `.../sistema-garcom/#/r/<codigo>`.
 
 ## Detalhes técnicos
 
 - Com banco: as telas se atualizam em tempo real (Supabase Realtime) e conferem o banco a cada 10 s; as ações aparecem na hora na tela e são confirmadas pelo banco em seguida.
 - Sem banco: os dados ficam no `localStorage` e abas do mesmo navegador são sincronizadas.
 - Navegação pela URL (`#/garcom/3`, `#/cozinha`, `#/caixa/historico`), então o botão voltar do navegador funciona.
+- Link do restaurante: `#/r/<codigo>` (na Vercel também `/r/<codigo>`, convertido ao abrir).
 
 ## Estrutura
 
@@ -168,6 +208,7 @@ src/
   store/supabase.js          conexão com o banco e tradução das ações em funções SQL
 supabase/schema.sql          tabelas, segurança e funções do banco (instalação do zero)
 supabase/migracao-*.sql      atualizações para um banco que já existe
+supabase/testes/             testes de isolamento entre restaurantes
   pages/                     Login, Painel, Equipe, Garcom, Mesa, Cozinha, Caixa, Conta, Historico
   components/ui.jsx          componentes visuais reutilizáveis
   data/cardapio.js           produtos e categorias

@@ -4,7 +4,7 @@ import { hashPin, PIN_PADRAO_ADMIN } from "../utils/pin.js";
 import { produtos as produtosLocais, categoriaLabels } from "../data/cardapio.js";
 
 export const NUM_MESAS = 10;
-export const TAXA_SERVICO = 0.1;
+export const TAXA_SERVICO = 0.1; // padrão; cada restaurante pode configurar a sua
 export const MINUTOS_ATRASO = 20;
 
 export const centavos = (v) => Math.round(v * 100) / 100;
@@ -126,6 +126,7 @@ export function estadoInicial() {
     fechamentos: [],
     funcionarios: [adminPadrao()],
     cardapio: CARDAPIO_LOCAL,
+    empresa: { nome: "Meu Restaurante", slug: null, taxaServico: TAXA_SERVICO },
   };
 }
 
@@ -143,6 +144,9 @@ export function migrar(salvo) {
   }
   if (dados.versao === 3) {
     dados = { ...dados, versao: 4, arquivo: [], fechamentos: [], cardapio: CARDAPIO_LOCAL };
+  }
+  if (dados.versao === 4 && !dados.empresa) {
+    dados = { ...dados, empresa: { nome: "Meu Restaurante", slug: null, taxaServico: TAXA_SERVICO } };
   }
   return dados.versao === 4 ? dados : null;
 }
@@ -262,7 +266,7 @@ function repartir(total, pesos) {
  * A taxa de serviço é repartida na proporção do consumo de cada um.
  * A soma das partes é sempre exatamente o total da conta.
  */
-export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa) {
+export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa, taxaServico = TAXA_SERVICO) {
   const emCentavos = (v) => Math.round(v * 100);
   const proprios = Array(pessoas).fill(0);
   let compartilhado = 0;
@@ -274,7 +278,7 @@ export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa) {
   const partesCompartilhadas = repartir(compartilhado, Array(pessoas).fill(1));
   const subtotais = proprios.map((v, i) => v + partesCompartilhadas[i]);
   const subtotalGeral = subtotais.reduce((a, b) => a + b, 0);
-  const taxaGeral = comTaxa ? Math.round(subtotalGeral * TAXA_SERVICO) : 0;
+  const taxaGeral = comTaxa ? Math.round(subtotalGeral * taxaServico) : 0;
   const taxas = repartir(taxaGeral, subtotais);
   return subtotais.map((sub, i) => ({
     pessoa: i,
@@ -485,7 +489,7 @@ export function reducer(state, action) {
       if (!mesa || mesa.comandas.length === 0) return state;
       const { comTaxa, pessoas } = action;
       const subtotal = totalMesa(mesa);
-      const taxa = centavos(comTaxa ? subtotal * TAXA_SERVICO : 0);
+      const taxa = centavos(comTaxa ? subtotal * (state.empresa?.taxaServico ?? TAXA_SERVICO) : 0);
       const total = centavos(subtotal + taxa);
       const pagamentos = juntarPagamentos(action.pagamentos ?? []);
       const resumo = resumoPagamento(pagamentos, total);
@@ -589,6 +593,13 @@ export function reducer(state, action) {
         };
       });
       return { ...state, mesas };
+    }
+
+    case "CONFIGURAR_EMPRESA": {
+      const empresa = { ...state.empresa };
+      if (action.nome != null && action.nome.trim()) empresa.nome = action.nome.trim().slice(0, 60);
+      if (action.taxa != null && action.taxa >= 0 && action.taxa <= 0.3) empresa.taxaServico = Math.round(action.taxa * 1000) / 1000;
+      return { ...state, empresa };
     }
 
     case "DEFINIR_MESAS": {

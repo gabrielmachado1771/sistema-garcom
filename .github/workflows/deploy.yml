@@ -27,6 +27,7 @@ jobs:
         env:
           # Configuradas em Settings → Secrets and variables → Actions → Variables.
           # Sem elas, o site é publicado em "modo local" (dados só no navegador).
+          GITHUB_PAGES: "true"
           VITE_SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
       - uses: actions/upload-pages-artifact@v3

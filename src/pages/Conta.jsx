@@ -26,7 +26,8 @@ const MODOS = [
 ];
 
 export default function Conta({ mesaId, navegar }) {
-  const { mesas, finalizarConta } = useRestaurante();
+  const { mesas, finalizarConta, empresa } = useRestaurante();
+  const taxaServico = empresa?.taxaServico ?? TAXA_SERVICO;
   const aviso = useAviso();
   const [comTaxa, setComTaxa] = useState(true);
   const [modo, setModo] = useState("uma");
@@ -53,12 +54,12 @@ export default function Conta({ mesaId, navegar }) {
 
   const itens = itensConsumidos(mesa);
   const subtotal = totalMesa(mesa);
-  const taxa = centavos(comTaxa ? subtotal * TAXA_SERVICO : 0);
+  const taxa = centavos(comTaxa ? subtotal * taxaServico : 0);
   const total = centavos(subtotal + taxa);
   const unidades = unidadesDaConta(mesa);
   const varias = modo !== "uma";
   const partes = varias
-    ? dividirPorItens(unidades, modo === "itens" ? atribuicao : {}, pessoas, comTaxa)
+    ? dividirPorItens(unidades, modo === "itens" ? atribuicao : {}, pessoas, comTaxa, taxaServico)
     : [{ pessoa: 0, total, proprio: 0, compartilhado: 0, taxa: 0 }];
   const nomes = Array.from({ length: Math.max(pessoas, 1) }, (_, i) => `Pessoa ${i + 1}`);
 
@@ -193,7 +194,7 @@ export default function Conta({ mesaId, navegar }) {
               }}
               className="accent-orange-500 w-4 h-4"
             />
-            Taxa de serviço ({TAXA_SERVICO * 100}%)
+            Taxa de serviço ({Math.round(taxaServico * 1000) / 10}%)
           </span>
           <span>{moeda(taxa)}</span>
         </label>

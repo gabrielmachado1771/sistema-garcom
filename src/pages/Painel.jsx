@@ -11,6 +11,114 @@ import {
 } from "../store/regras";
 import { hora, moeda } from "../utils/format";
 import { Botao, Cabecalho, Cartao, Pagina, TituloSecao } from "../components/ui";
+import { linkDoRestaurante } from "../utils/codigo";
+
+/** Nome, taxa de serviço e link do restaurante. */
+function ConfigRestaurante() {
+  const { empresa, configurarEmpresa, modo } = useRestaurante();
+  const aviso = useAviso();
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState("");
+  const [taxa, setTaxa] = useState("");
+  if (!empresa) return null;
+  const link = empresa.slug ? linkDoRestaurante(empresa.slug) : null;
+  const pct = Math.round((empresa.taxaServico ?? 0.1) * 1000) / 10;
+
+  function abrir() {
+    setNome(empresa.nome);
+    setTaxa(String(pct).replace(".", ","));
+    setEditando(true);
+  }
+
+  function salvar(e) {
+    e.preventDefault();
+    const valor = Number(taxa.replace(",", "."));
+    if (!nome.trim()) return aviso("Informe o nome do restaurante.", { tipo: "erro" });
+    if (!(valor >= 0 && valor <= 30)) return aviso("A taxa precisa ficar entre 0% e 30%.", { tipo: "erro" });
+    configurarEmpresa({ nome: nome.trim(), taxa: valor / 100 });
+    aviso("Dados do restaurante salvos.");
+    setEditando(false);
+  }
+
+  async function copiar() {
+    try {
+      await navigator.clipboard.writeText(link);
+      aviso("Link copiado! Mande para a sua equipe.");
+    } catch {
+      window.prompt("Copie o link do restaurante:", link);
+    }
+  }
+
+  return (
+    <Cartao>
+      <TituloSecao
+        acao={
+          !editando && (
+            <button type="button" className="text-xs text-orange-400 hover:underline" onClick={abrir}>
+              Editar
+            </button>
+          )
+        }
+      >
+        Restaurante
+      </TituloSecao>
+      {editando ? (
+        <form onSubmit={salvar} className="space-y-3">
+          <label className="block">
+            <span className="text-xs text-zinc-400">Nome</span>
+            <input
+              value={nome}
+              maxLength={60}
+              onChange={(e) => setNome(e.target.value)}
+              className="mt-1 w-full bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-zinc-400">Taxa de serviço (%)</span>
+            <input
+              inputMode="decimal"
+              value={taxa}
+              onChange={(e) => setTaxa(e.target.value)}
+              className="mt-1 w-24 bg-zinc-800 border border-zinc-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-orange-500"
+            />
+          </label>
+          <div className="flex gap-2">
+            <Botao variante="fantasma" className="flex-1 py-2 text-sm" onClick={() => setEditando(false)}>
+              Cancelar
+            </Botao>
+            <Botao type="submit" variante="primario" className="flex-1 py-2 text-sm">
+              Salvar
+            </Botao>
+          </div>
+        </form>
+      ) : (
+        <div className="space-y-2 text-sm">
+          <p className="flex justify-between gap-3">
+            <span className="text-zinc-400">Nome</span>
+            <span className="font-semibold text-right">{empresa.nome}</span>
+          </p>
+          <p className="flex justify-between gap-3">
+            <span className="text-zinc-400">Taxa de serviço</span>
+            <span className="font-semibold">{String(pct).replace(".", ",")}%</span>
+          </p>
+          {modo === "nuvem" && link && (
+            <div className="pt-2 border-t border-zinc-800">
+              <p className="text-zinc-400 text-xs mb-1">
+                Link da equipe (código <b className="text-zinc-200">{empresa.slug}</b>)
+              </p>
+              <div className="flex gap-2">
+                <code className="flex-1 min-w-0 truncate bg-zinc-800 rounded-lg px-2 py-1.5 text-xs">{link}</code>
+                <Botao className="px-3 py-1.5 text-xs shrink-0" onClick={copiar}>
+                  Copiar
+                </Botao>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Cartao>
+  );
+}
 
 /** Admin escolhe quantas mesas o restaurante tem. */
 function QuantidadeMesas({ mesas, onFechar }) {
@@ -94,7 +202,7 @@ const corMesa = {
 };
 
 export default function Painel({ navegar }) {
-  const { mesas, historico, funcionarios, usuario } = useRestaurante();
+  const { mesas, historico, funcionarios, usuario, empresa } = useRestaurante();
 
   const ocupadas = mesas.filter(mesaOcupada).length;
   const preparo = comandasNaCozinha(mesas, "preparo").length;
@@ -112,7 +220,7 @@ export default function Painel({ navegar }) {
 
   return (
     <Pagina largura="max-w-5xl">
-      <Cabecalho titulo={`${saudacao}, ${usuario.nome.split(" ")[0]}!`} subtitulo="Visão geral do restaurante agora" />
+      <Cabecalho titulo={`${saudacao}, ${usuario.nome.split(" ")[0]}!`} subtitulo={`Visão geral do ${empresa?.nome ?? "restaurante"} agora`} />
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <Indicador
@@ -215,6 +323,10 @@ export default function Painel({ navegar }) {
             </ul>
           )}
         </Cartao>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <ConfigRestaurante />
       </div>
     </Pagina>
   );
