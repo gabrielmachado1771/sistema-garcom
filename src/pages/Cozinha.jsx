@@ -1,6 +1,7 @@
 import { useRestaurante } from "../store/contexto";
 import AtivarAvisos from "../components/AtivarAvisos";
-import { chaveItem, comandasNaCozinha, MINUTOS_ATRASO } from "../store/regras";
+import { chaveItem, comandasNaCozinha, descreverItem, descreverOpcoes, MINUTOS_ATRASO } from "../store/regras";
+import PainelEsgotados from "../components/PainelEsgotados";
 import { hora, minutosDesde, plural, tempoDecorrido } from "../utils/format";
 import useAgora from "../hooks/useAgora";
 import { Botao, Cabecalho, Etiqueta, Pagina, Vazio } from "../components/ui";
@@ -20,6 +21,7 @@ export default function Cozinha() {
       />
 
       <AtivarAvisos texto="Receba um aviso quando chegar pedido novo, mesmo com esta tela em segundo plano." />
+      <PainelEsgotados />
 
       {pendentes.length === 0 && (
         <Vazio icone="👨‍🍳">Nenhum pedido para preparar no momento.</Vazio>
@@ -39,7 +41,7 @@ export default function Cozinha() {
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <h2 className="text-xl font-bold text-orange-500">
-                    Mesa {c.mesaNumero}
+                    {c.rotulo}
                     {c.numero > 1 && <span className="text-sm text-zinc-400 font-normal"> · pedido #{c.numero}</span>}
                   </h2>
                   <p className={`text-sm ${atrasado ? "text-red-400 font-semibold" : "text-zinc-400"}`}>
@@ -60,6 +62,9 @@ export default function Cozinha() {
                     <span className="font-bold text-orange-400 tabular-nums w-8 shrink-0">{item.qtd}x</span>
                     <span className="min-w-0">
                       <span className="font-medium">{item.nome}</span>
+                      {item.opcoes?.length > 0 && (
+                        <span className="block text-sm font-semibold text-orange-300">{descreverOpcoes(item.opcoes)}</span>
+                      )}
                       {item.obs && (
                         <span className="block text-sm font-semibold text-yellow-300">⚠️ {item.obs}</span>
                       )}
@@ -99,9 +104,9 @@ export default function Cozinha() {
                 className="bg-zinc-900/50 border border-green-500/20 rounded-2xl px-4 py-3 flex items-center justify-between gap-3"
               >
                 <div className="min-w-0">
-                  <p className="font-bold text-green-400">Mesa {c.mesaNumero}</p>
+                  <p className="font-bold text-green-400">{c.rotulo}</p>
                   <p className="text-xs text-zinc-500 truncate">
-                    pronto {tempoDecorrido(c.prontaEm, agora)} · {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
+                    pronto {tempoDecorrido(c.prontaEm, agora)} · {c.itens.map((i) => `${i.qtd}x ${descreverItem(i)}`).join(", ")}
                   </p>
                 </div>
                 <Botao

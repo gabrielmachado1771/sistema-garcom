@@ -27,9 +27,9 @@ export default function Alertas({ area }) {
 
     if (area === "cozinha") {
       for (const c of novos(preparo)) {
-        aviso(`🔔 Novo pedido — Mesa ${c.mesaNumero}`, { tipo: "alerta", som: true, duracao: 5000 });
+        aviso(`🔔 Novo pedido — ${c.rotulo}`, { tipo: "alerta", som: true, duracao: 5000 });
         if (document.visibilityState !== "visible") {
-          notificar(`🔔 Novo pedido — Mesa ${c.mesaNumero}`, c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", "), `novo-${c.id}`);
+          notificar(`🔔 Novo pedido — ${c.rotulo}`, c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", "), `novo-${c.id}`);
         }
       }
     }
@@ -39,7 +39,7 @@ export default function Alertas({ area }) {
         const minha = c.atendente?.id === usuario?.id;
         const forte = minha || usuario?.funcao !== "garcom";
         const itens = c.itens.map((i) => `${i.qtd}x ${i.nome}`).join(", ");
-        aviso(`✅ Mesa ${c.mesaNumero} pronta para servir${minha ? " (sua mesa)" : ""}`, {
+        aviso(`✅ ${c.rotulo} pronto para servir${minha ? " (sua mesa)" : ""}`, {
           tipo: forte ? "sucesso" : "info",
           som: forte,
           duracao: forte ? 8000 : 4000,
@@ -47,7 +47,7 @@ export default function Alertas({ area }) {
         if (forte) {
           vibrar();
           if (document.visibilityState !== "visible") {
-            notificar(`🍽️ Mesa ${c.mesaNumero} pronta!`, itens, `pronto-${c.id}`);
+            notificar(`🍽️ ${c.rotulo} pronto!`, itens, `pronto-${c.id}`);
           }
         }
       }

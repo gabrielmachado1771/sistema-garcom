@@ -69,7 +69,7 @@ export default function Historico({ navegar }) {
                 <Cartao key={v.id}>
                   <div className="flex justify-between items-start mb-2">
                     <div>
-                      <p className="font-bold">Mesa {v.mesa}</p>
+                      <p className="font-bold">{v.rotulo ?? `Mesa ${v.mesa}`}</p>
                       <p className="text-xs text-zinc-500">{dataHora(v.data)}</p>
                       {(v.atendente || v.operador) && (
                         <p className="text-xs text-zinc-500">
@@ -92,6 +92,12 @@ export default function Historico({ navegar }) {
                       )}
                       {v.pessoas > 1 && <p className="text-xs text-zinc-400">{v.pessoas} pessoas</p>}
                       {v.troco > 0 && <p className="text-xs text-zinc-500">troco {moeda(v.troco)}</p>}
+                      {v.desconto > 0 && (
+                        <p className="text-xs text-yellow-300" title={v.descontoMotivo ?? ""}>
+                          desconto {moeda(v.desconto)}
+                          {v.descontoPor && ` · ${v.descontoPor}`}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <p className="text-sm text-zinc-400">

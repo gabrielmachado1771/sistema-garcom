@@ -51,11 +51,17 @@ function gravarLocal(chave, valor) {
 /** Ações disponíveis para as telas — iguais nos dois modos. */
 function criarAcoes(executar, assinatura) {
   return {
-    adicionarItem: (mesaId, produto, obs = "") =>
-      executar({ type: "ADICIONAR_ITEM", mesaId, produto, obs, atendente: assinatura }),
-    removerItem: (mesaId, produtoId, obs = "") => executar({ type: "REMOVER_ITEM", mesaId, produtoId, obs }),
-    observacaoItem: (mesaId, produtoId, obsAntiga, obs, qtd) =>
-      executar({ type: "OBSERVACAO_ITEM", mesaId, produtoId, obsAntiga, obs, qtd }),
+    adicionarItem: (mesaId, produto, obs = "", opcoes = []) =>
+      executar({ type: "ADICIONAR_ITEM", mesaId, produto, obs, opcoes, atendente: assinatura }),
+    removerItem: (mesaId, produtoId, obs = "", opcoesChave = "") =>
+      executar({ type: "REMOVER_ITEM", mesaId, produtoId, obs, opcoesChave }),
+    observacaoItem: (mesaId, produtoId, obsAntiga, obs, qtd, opcoesChave = "") =>
+      executar({ type: "OBSERVACAO_ITEM", mesaId, produtoId, obsAntiga, obs, qtd, opcoesChave }),
+    cancelarItem: (mesaId, comandaId, itemId, qtd, autorizacao) =>
+      executar({ type: "CANCELAR_ITEM", mesaId, comandaId, itemId, qtd, ...autorizacao }),
+    cancelarBalcao: (mesaId) => executar({ type: "CANCELAR_BALCAO", mesaId }),
+    marcarEsgotado: (produtoId, esgotado) => executar({ type: "MARCAR_ESGOTADO", produtoId, esgotado }),
+    salvarOpcoesProduto: (produtoId, grupos) => executar({ type: "SALVAR_OPCOES_PRODUTO", produtoId, grupos }),
     transferirMesa: (origemId, destinoId) => executar({ type: "TRANSFERIR_MESA", origemId, destinoId }),
     definirMesas: (quantidade) => executar({ type: "DEFINIR_MESAS", quantidade }),
     configurarEmpresa: (dados) => executar({ type: "CONFIGURAR_EMPRESA", ...dados }),
@@ -71,7 +77,8 @@ function criarAcoes(executar, assinatura) {
     marcarPronto: (mesaId, comandaId) => executar({ type: "MARCAR_PRONTO", mesaId, comandaId }),
     voltarPreparo: (mesaId, comandaId) => executar({ type: "VOLTAR_PREPARO", mesaId, comandaId }),
     marcarEntregue: (mesaId, comandaId) => executar({ type: "MARCAR_ENTREGUE", mesaId, comandaId }),
-    cancelarComanda: (mesaId, comandaId) => executar({ type: "CANCELAR_COMANDA", mesaId, comandaId }),
+    cancelarComanda: (mesaId, comandaId, autorizacao) =>
+      executar({ type: "CANCELAR_COMANDA", mesaId, comandaId, ...autorizacao }),
     finalizarConta: (mesaId, pagamento) =>
       executar({ type: "FINALIZAR_CONTA", mesaId, ...pagamento, operador: assinatura?.nome }),
     fecharCaixa: () => executar({ type: "FECHAR_CAIXA", operador: assinatura?.nome }),
@@ -147,6 +154,23 @@ function ProviderLocal({ children }) {
   const sair = useCallback(() => setUsuarioId(null), []);
 
   const acoes = useMemo(() => criarAcoes(dispatch, assinatura), [assinatura]);
+
+  const abrirBalcao = useCallback(
+    async (tipo, cliente) => {
+      const numero = Math.max(1000, ...state.mesas.map((m) => m.numero)) + 1;
+      dispatch({ type: "ABRIR_BALCAO", tipo, cliente, atendente: assinatura });
+      return numero;
+    },
+    [state.mesas, assinatura]
+  );
+
+  const conferirPinAdmin = useCallback(
+    async (pin) => {
+      const admin = state.funcionarios.find((f) => f.funcao === "admin" && verificarPin(f, pin));
+      return admin ? { ok: true, admin: admin.nome } : { ok: false, erro: "PIN_ADMIN_INCORRETO" };
+    },
+    [state.funcionarios]
+  );
   const funcionariosLogin = useMemo(() => state.funcionarios.filter((f) => f.ativo), [state.funcionarios]);
 
   const buscarRelatorio = useCallback(
@@ -173,10 +197,12 @@ function ProviderLocal({ children }) {
       usuario,
       funcionariosLogin,
       buscarRelatorio,
+      abrirBalcao,
+      conferirPinAdmin,
       entrar,
       sair,
     }),
-    [state, acoes, usuario, funcionariosLogin, buscarRelatorio, entrar, sair]
+    [state, acoes, usuario, funcionariosLogin, buscarRelatorio, abrirBalcao, conferirPinAdmin, entrar, sair]
   );
 
   return <RestauranteContext.Provider value={valor}>{children}</RestauranteContext.Provider>;
@@ -353,6 +379,8 @@ function ProviderNuvem({ children }) {
         const dados = await rpc(funcao, { p_token: tokenRef.current, ...args });
         pendentes.current--;
         setConexao("online");
+        // Algumas funções devolvem um aviso sem desfazer (ex.: PIN de admin errado).
+        if (dados?.erro) tratarErro({ message: dados.erro });
         aplicar(dados);
         avisarOutros();
       } catch (e) {
@@ -403,6 +431,30 @@ function ProviderNuvem({ children }) {
     dispatch({ type: "SINCRONIZAR", state: null });
   }, []);
 
+  // Pedido de balcão/retirada: precisa do número criado pelo banco para abrir a tela dele.
+  const abrirBalcao = useCallback(
+    async (tipo, cliente) => {
+      try {
+        const dados = await rpc("abrir_balcao", { p_token: tokenRef.current, p_tipo: tipo, p_cliente: cliente || null });
+        aplicar(dados);
+        avisarOutros();
+        return dados.criado;
+      } catch (e) {
+        tratarErro(e);
+        return null;
+      }
+    },
+    [aplicar, avisarOutros, tratarErro]
+  );
+
+  const conferirPinAdmin = useCallback(async (pin) => {
+    try {
+      return await rpc("conferir_pin_admin", { p_token: tokenRef.current, p_pin: pin });
+    } catch (e) {
+      return { ok: false, erro: ehErroDeRede(e) ? "SEM_CONEXAO" : "ERRO" };
+    }
+  }, []);
+
   // Relatórios buscam direto no banco (incluem caixas já fechados).
   const buscarRelatorio = useCallback(
     async (de, ate) => {
@@ -446,6 +498,8 @@ function ProviderNuvem({ children }) {
       definirRestaurante,
       esquecerRestaurante,
       buscarRelatorio,
+      abrirBalcao,
+      conferirPinAdmin,
       entrar,
       sair,
     }),
@@ -462,6 +516,8 @@ function ProviderNuvem({ children }) {
       definirRestaurante,
       esquecerRestaurante,
       buscarRelatorio,
+      abrirBalcao,
+      conferirPinAdmin,
       entrar,
       sair,
     ]

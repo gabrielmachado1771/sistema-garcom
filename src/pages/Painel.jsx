@@ -4,6 +4,7 @@ import {
   comandasNaCozinha,
   FUNCOES,
   MAX_MESAS,
+  mesasDoSalao,
   descreverPagamento,
   mesaOcupada,
   statusMesa,
@@ -202,12 +203,13 @@ const corMesa = {
 };
 
 export default function Painel({ navegar }) {
-  const { mesas, historico, funcionarios, usuario, empresa } = useRestaurante();
+  const { mesas: todas, historico, funcionarios, usuario, empresa } = useRestaurante();
+  const mesas = mesasDoSalao(todas);
 
   const ocupadas = mesas.filter(mesaOcupada).length;
-  const preparo = comandasNaCozinha(mesas, "preparo").length;
-  const prontos = comandasNaCozinha(mesas, "pronto").length;
-  const emAberto = mesas.reduce((acc, m) => acc + totalMesa(m), 0);
+  const preparo = comandasNaCozinha(todas, "preparo").length;
+  const prontos = comandasNaCozinha(todas, "pronto").length;
+  const emAberto = todas.reduce((acc, m) => acc + totalMesa(m), 0);
   const vendido = historico.reduce((acc, v) => acc + v.total, 0);
   const ticket = historico.length ? vendido / historico.length : 0;
   const ativos = funcionarios.filter((f) => f.ativo);
@@ -312,7 +314,7 @@ export default function Painel({ navegar }) {
               {historico.slice(0, 5).map((v) => (
                 <li key={v.id} className="py-2 flex justify-between text-sm gap-2">
                   <span>
-                    Mesa {v.mesa}
+                    {v.rotulo ?? `Mesa ${v.mesa}`}
                     <span className="text-zinc-500">
                       {" "}· {hora(v.data)} · {descreverPagamento(v)}
                     </span>

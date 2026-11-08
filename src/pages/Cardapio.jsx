@@ -3,6 +3,7 @@ import { useAviso, useRestaurante } from "../store/contexto";
 import { moeda, parseValor } from "../utils/format";
 import { classeInput } from "../utils/estilos";
 import { Botao, Cabecalho, Campo, Cartao, Modal, Pagina, Vazio } from "../components/ui";
+import ModalOpcoesProduto from "../components/ModalOpcoesProduto";
 
 function normalizar(texto) {
   return texto.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -63,8 +64,17 @@ function ModalProduto({ produto, categoriaId, cardapio, onSalvar, onFechar }) {
 }
 
 export default function Cardapio() {
-  const { cardapio, salvarProduto, removerProduto, salvarCategoria, removerCategoria, moverCategoria } =
-    useRestaurante();
+  const {
+    cardapio,
+    salvarProduto,
+    removerProduto,
+    salvarCategoria,
+    removerCategoria,
+    moverCategoria,
+    marcarEsgotado,
+    salvarOpcoesProduto,
+  } = useRestaurante();
+  const [opcoesDe, setOpcoesDe] = useState(null); // produto com o editor de opções aberto
   const aviso = useAviso();
   const [busca, setBusca] = useState("");
   const [editando, setEditando] = useState(null); // { produto?, categoriaId }
@@ -114,6 +124,17 @@ export default function Cardapio() {
         </Botao>
       </Cabecalho>
 
+      {opcoesDe && (
+        <ModalOpcoesProduto
+          produto={opcoesDe}
+          onFechar={() => setOpcoesDe(null)}
+          onSalvar={(grupos) => {
+            salvarOpcoesProduto(opcoesDe.id, grupos);
+            aviso(grupos.length ? `Opções de “${opcoesDe.nome}” salvas.` : `“${opcoesDe.nome}” ficou sem opções.`);
+            setOpcoesDe(null);
+          }}
+        />
+      )}
       {editando && (
         <ModalProduto
           produto={editando.produto}
@@ -190,8 +211,31 @@ export default function Cardapio() {
                       onClick={() => setEditando({ produto: p, categoriaId: cat.id })}
                       className="flex-1 min-w-0 flex justify-between gap-3 text-left text-sm hover:text-orange-300 transition"
                     >
-                      <span className="truncate">{p.nome}</span>
+                      <span className="min-w-0">
+                        <span className={`block truncate ${p.disponivel === false ? "line-through text-zinc-500" : ""}`}>{p.nome}</span>
+                        {p.grupos?.length > 0 && (
+                          <span className="block text-[11px] text-zinc-500 truncate">{p.grupos.map((g) => g.nome).join(" · ")}</span>
+                        )}
+                      </span>
                       <span className="text-orange-400 font-semibold tabular-nums whitespace-nowrap">{moeda(p.preco)}</span>
+                    </button>
+                    <Botao variante="fantasma" className="px-2 h-8 text-xs shrink-0" onClick={() => setOpcoesDe(p)}>
+                      Opções{p.grupos?.length ? ` (${p.grupos.length})` : ""}
+                    </Botao>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={p.disponivel === false}
+                      aria-label={`${p.nome} esgotado`}
+                      onClick={() => {
+                        marcarEsgotado(p.id, p.disponivel !== false);
+                        aviso(p.disponivel !== false ? `${p.nome} esgotado.` : `${p.nome} disponível.`, { tipo: "info" });
+                      }}
+                      className={`shrink-0 h-8 px-2 rounded-lg text-[11px] font-semibold ${
+                        p.disponivel === false ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"
+                      }`}
+                    >
+                      {p.disponivel === false ? "Esgotado" : "Disponível"}
                     </button>
                     <Botao
                       variante="fantasma"

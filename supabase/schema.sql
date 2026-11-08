@@ -22,7 +22,7 @@
 create schema if not exists extensions;
 create extension if not exists pgcrypto with schema extensions;
 
-drop table if exists log_auditoria, super_admins, comanda_itens, comandas, venda_pagamentos, vendas, fechamentos_caixa,
+drop table if exists opcoes, grupos_opcoes, log_auditoria, super_admins, comanda_itens, comandas, venda_pagamentos, vendas, fechamentos_caixa,
   rascunho_itens, mesas, produtos, categorias, sessoes, funcionarios, empresas cascade;
 
 -- ---------------------------------------------------------------------
@@ -63,7 +63,10 @@ create table sessoes (
   funcionario_id uuid not null references funcionarios (id) on delete cascade,
   criada_em      timestamptz not null default now(),
   expira_em      timestamptz not null default now() + interval '12 hours',
-  suporte_nome   text -- preenchido quando é o dono do sistema acessando para dar suporte
+  suporte_nome   text, -- preenchido quando é o dono do sistema acessando para dar suporte
+  -- Autorização por PIN de admin (desconto/cancelamento): 5 erros bloqueiam por 5 minutos.
+  falhas_autorizacao        int not null default 0,
+  autorizacao_bloqueada_ate timestamptz
 );
 
 create table categorias (
@@ -82,8 +85,33 @@ create table produtos (
   nome         text not null,
   preco        numeric(10, 2) not null check (preco >= 0),
   ativo        boolean not null default true,
+  disponivel   boolean not null default true, -- false = esgotado (continua no cardápio, mas não pode ser pedido)
   unique (empresa_id, id),
   foreign key (empresa_id, categoria_id) references categorias (empresa_id, id)
+);
+
+-- Variações e adicionais de um produto. Ex.: "Ponto da carne" (obrigatório, escolhe 1),
+-- "Adicionais" (opcional, até 5). Cada opção pode ter preço extra.
+create table grupos_opcoes (
+  id          serial primary key,
+  empresa_id  uuid not null,
+  produto_id  int not null,
+  nome        text not null check (length(trim(nome)) between 1 and 40),
+  obrigatorio boolean not null default false,
+  maximo      int not null default 1 check (maximo between 1 and 20),
+  ordem       int not null default 0,
+  unique (empresa_id, id),
+  foreign key (empresa_id, produto_id) references produtos (empresa_id, id) on delete cascade
+);
+
+create table opcoes (
+  id         serial primary key,
+  empresa_id uuid not null,
+  grupo_id   int not null,
+  nome       text not null check (length(trim(nome)) between 1 and 40),
+  preco      numeric(10, 2) not null default 0 check (preco >= 0),
+  ordem      int not null default 0,
+  foreign key (empresa_id, grupo_id) references grupos_opcoes (empresa_id, id) on delete cascade
 );
 
 create table mesas (
@@ -92,7 +120,11 @@ create table mesas (
   aberta_em    timestamptz,
   atendente_id uuid references funcionarios (id) on delete set null,
   observacao   text not null default '',
-  ativa        boolean not null default true, -- false = mesa desativada pelo admin
+  ativa        boolean not null default true, -- false = mesa desativada pelo admin (ou pedido de balcão encerrado)
+  tipo         text not null default 'mesa' check (tipo in ('mesa', 'balcao', 'retirada')),
+  cliente      text,          -- balcão/retirada: nome de quem pediu
+  senha        int,           -- balcão/retirada: número chamado no balcão (reinicia todo dia)
+  criada_em    timestamptz not null default now(),
   primary key (empresa_id, numero)
 );
 
@@ -102,9 +134,11 @@ create table rascunho_itens (
   mesa_numero   int not null,
   produto_id    int not null,
   obs           text not null default '', -- observação do item (ex.: "sem cebola")
+  opcoes        jsonb not null default '[]'::jsonb, -- variações/adicionais escolhidos: [{id, grupo, nome, preco}]
+  opcoes_chave  text not null default '',            -- ids das opções em ordem ("3,7"): separa linhas diferentes
   qtd           int not null check (qtd > 0),
   adicionado_em timestamptz not null default clock_timestamp(),
-  primary key (empresa_id, mesa_numero, produto_id, obs),
+  primary key (empresa_id, mesa_numero, produto_id, obs, opcoes_chave),
   foreign key (empresa_id, mesa_numero) references mesas (empresa_id, numero) on delete cascade,
   foreign key (empresa_id, produto_id) references produtos (empresa_id, id)
 );
@@ -137,6 +171,10 @@ create table vendas (
   operador_id     uuid references funcionarios (id) on delete set null,
   operador_nome   text,
   fechamento_id   uuid references fechamentos_caixa (id), -- null = ainda no caixa do dia
+  rotulo          text,                                   -- "Mesa 3", "Balcão #12 · João"…
+  desconto        numeric(10, 2) not null default 0,
+  desconto_motivo text,
+  desconto_por    text,                                   -- admin que autorizou
   unique (empresa_id, id),
   foreign key (empresa_id, mesa_numero) references mesas (empresa_id, numero)
 );
@@ -183,6 +221,7 @@ create table comanda_itens (
   preco      numeric(10, 2) not null,
   qtd        int not null check (qtd > 0),
   obs        text not null default '',
+  opcoes     jsonb not null default '[]'::jsonb,
   foreign key (empresa_id, comanda_id) references comandas (empresa_id, id) on delete cascade,
   foreign key (empresa_id, produto_id) references produtos (empresa_id, id)
 );
@@ -225,6 +264,8 @@ alter table venda_pagamentos  enable row level security;
 alter table comandas          enable row level security;
 alter table comanda_itens     enable row level security;
 alter table super_admins      enable row level security;
+alter table grupos_opcoes     enable row level security;
+alter table opcoes            enable row level security;
 alter table log_auditoria     enable row level security;
 
 revoke all on all tables    in schema public from anon, authenticated;
@@ -296,7 +337,9 @@ begin
         'configurar_empresa', 'definir_mesas', 'salvar_categoria', 'remover_categoria', 'mover_categoria',
         'salvar_produto', 'remover_produto', 'relatorio', '_log', '_log_admin', '_super_admin', '_hoje',
         'admin_eu', 'admin_painel', 'admin_criar_empresa', 'admin_editar_empresa', 'admin_status_empresa',
-        'admin_funcionarios', 'admin_resetar_pin', 'admin_acessar_como', 'admin_relatorio', 'admin_auditoria'])
+        'admin_funcionarios', 'admin_resetar_pin', 'admin_acessar_como', 'admin_relatorio', 'admin_auditoria',
+        '_opcoes_validas', '_autorizar_admin', 'cancelar_item', 'conferir_pin_admin', 'abrir_balcao', 'cancelar_balcao',
+        'marcar_esgotado', 'salvar_opcoes_produto'])
   loop
     execute 'drop function ' || r.assinatura;
   end loop;
@@ -374,12 +417,18 @@ language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object(
     'id', m.numero,
     'numero', m.numero,
+    'tipo', m.tipo,
+    'cliente', m.cliente,
+    'senha', m.senha,
     'abertaEm', _ms(m.aberta_em),
     'observacao', m.observacao,
     'atendente', case when f.id is null then null else jsonb_build_object('id', f.id, 'nome', f.nome) end,
     'rascunho', coalesce((
-      select jsonb_agg(jsonb_build_object('produtoId', p.id, 'nome', p.nome, 'preco', p.preco, 'qtd', r.qtd, 'obs', r.obs)
-                       order by r.adicionado_em, p.id, r.obs)
+      select jsonb_agg(jsonb_build_object(
+        'produtoId', p.id, 'nome', p.nome, 'qtd', r.qtd, 'obs', r.obs,
+        'opcoes', r.opcoes, 'opcoesChave', r.opcoes_chave,
+        'preco', p.preco + coalesce((select sum((o ->> 'preco')::numeric) from jsonb_array_elements(r.opcoes) o), 0))
+        order by r.adicionado_em, p.id, r.obs, r.opcoes_chave)
       from rascunho_itens r join produtos p on p.empresa_id = r.empresa_id and p.id = r.produto_id
       where r.empresa_id = p_empresa and r.mesa_numero = m.numero), '[]'::jsonb),
     'comandas', coalesce((
@@ -394,14 +443,14 @@ language sql stable security definer set search_path = public as $$
         'atendente', case when c.atendente_nome is null then null
                      else jsonb_build_object('id', c.atendente_id, 'nome', c.atendente_nome) end,
         'itens', coalesce((
-          select jsonb_agg(jsonb_build_object('produtoId', ci.produto_id, 'nome', ci.nome, 'preco', ci.preco,
-                                              'qtd', ci.qtd, 'obs', ci.obs)
+          select jsonb_agg(jsonb_build_object('id', ci.id, 'produtoId', ci.produto_id, 'nome', ci.nome, 'preco', ci.preco,
+                                              'qtd', ci.qtd, 'obs', ci.obs, 'opcoes', ci.opcoes)
                            order by ci.id)
           from comanda_itens ci where ci.empresa_id = p_empresa and ci.comanda_id = c.id), '[]'::jsonb)
       ) order by c.numero)
       from comandas c
       where c.empresa_id = p_empresa and c.mesa_numero = m.numero and c.venda_id is null), '[]'::jsonb)
-  ) order by m.numero), '[]'::jsonb)
+  ) order by m.tipo <> 'mesa', m.numero), '[]'::jsonb)
   from mesas m left join funcionarios f on f.id = m.atendente_id
   where m.empresa_id = p_empresa and m.ativa;
 $$;
@@ -427,6 +476,10 @@ language sql stable security definer set search_path = public as $$
     'data', _ms(v.fechada_em),
     'atendente', v.atendente_nome,
     'operador', v.operador_nome,
+    'rotulo', coalesce(v.rotulo, 'Mesa ' || v.mesa_numero),
+    'desconto', v.desconto,
+    'descontoMotivo', v.desconto_motivo,
+    'descontoPor', v.desconto_por,
     'itens', coalesce((
       select jsonb_agg(jsonb_build_object('produtoId', x.produto_id, 'nome', x.nome, 'preco', x.preco, 'qtd', x.qtd))
       from (
@@ -462,7 +515,17 @@ language sql stable security definer set search_path = public as $$
     'id', c.id,
     'nome', c.nome,
     'produtos', coalesce((
-      select jsonb_agg(jsonb_build_object('id', p.id, 'nome', p.nome, 'preco', p.preco) order by p.id)
+      select jsonb_agg(jsonb_build_object(
+        'id', p.id, 'nome', p.nome, 'preco', p.preco, 'disponivel', p.disponivel,
+        'grupos', coalesce((
+          select jsonb_agg(jsonb_build_object(
+            'id', g.id, 'nome', g.nome, 'obrigatorio', g.obrigatorio, 'maximo', g.maximo,
+            'opcoes', coalesce((
+              select jsonb_agg(jsonb_build_object('id', o.id, 'nome', o.nome, 'preco', o.preco) order by o.ordem, o.id)
+              from opcoes o where o.empresa_id = p_empresa and o.grupo_id = g.id), '[]'::jsonb)
+          ) order by g.ordem, g.id)
+          from grupos_opcoes g where g.empresa_id = p_empresa and g.produto_id = p.id), '[]'::jsonb)
+      ) order by p.id)
       from produtos p where p.empresa_id = p_empresa and p.categoria_id = c.id and p.ativo), '[]'::jsonb)
   ) order by c.ordem, c.id), '[]'::jsonb)
   from categorias c
@@ -475,6 +538,68 @@ begin
   if p_pin is null or p_pin !~ '^[0-9]{4}$' then
     raise exception 'PIN_INVALIDO';
   end if;
+end $$;
+
+-- Confere as opções escolhidas para um produto e devolve a "foto" delas (nome e preço de agora).
+-- Regras: todas são do produto; cada grupo respeita o máximo; grupos obrigatórios têm escolha.
+create or replace function _opcoes_validas(p_empresa uuid, p_produto int, p_ids int[]) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_ids int[] := coalesce(p_ids, '{}');
+  v_validas int;
+begin
+  select count(*) into v_validas
+  from opcoes o join grupos_opcoes g on g.empresa_id = o.empresa_id and g.id = o.grupo_id
+  where o.empresa_id = p_empresa and g.produto_id = p_produto and o.id = any (v_ids);
+  if v_validas <> cardinality(array(select distinct unnest(v_ids))) or cardinality(v_ids) <> v_validas then
+    raise exception 'OPCOES_INVALIDAS';
+  end if;
+  if exists (
+    select 1 from grupos_opcoes g
+    where g.empresa_id = p_empresa and g.produto_id = p_produto
+      and ((select count(*) from opcoes o where o.grupo_id = g.id and o.id = any (v_ids)) > g.maximo
+           or (g.obrigatorio and not exists (select 1 from opcoes o where o.grupo_id = g.id and o.id = any (v_ids))))
+  ) then
+    raise exception 'OPCOES_INVALIDAS';
+  end if;
+  return coalesce((
+    select jsonb_agg(jsonb_build_object('id', o.id, 'grupo', g.nome, 'nome', o.nome, 'preco', o.preco)
+                     order by g.ordem, g.id, o.ordem, o.id)
+    from opcoes o join grupos_opcoes g on g.empresa_id = o.empresa_id and g.id = o.grupo_id
+    where o.empresa_id = p_empresa and o.id = any (v_ids)), '[]'::jsonb);
+end $$;
+
+-- Autorização de admin para desconto/cancelamento. Se quem está logado já é admin, vale ele mesmo.
+-- Senão, confere o PIN contra os admins ativos do restaurante. 5 erros bloqueiam por 5 minutos.
+create or replace function _autorizar_admin(p_token uuid, u funcionarios, p_pin text) returns funcionarios
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  s sessoes;
+  a funcionarios;
+begin
+  if u.funcao = 'admin' then
+    return u;
+  end if;
+  select * into s from sessoes where token = p_token for update;
+  if s.autorizacao_bloqueada_ate > now() then
+    raise exception 'AUTORIZACAO_BLOQUEADA';
+  end if;
+  if p_pin is not null and p_pin ~ '^[0-9]{4}$' then
+    select f.* into a from funcionarios f
+    where f.empresa_id = u.empresa_id and f.funcao = 'admin' and f.ativo and f.pin_hash = crypt(p_pin, f.pin_hash)
+    limit 1;
+  end if;
+  if a.id is null then
+    update sessoes set
+      falhas_autorizacao = case when falhas_autorizacao + 1 >= 5 then 0 else falhas_autorizacao + 1 end,
+      autorizacao_bloqueada_ate = case when falhas_autorizacao + 1 >= 5 then now() + interval '5 minutes' else autorizacao_bloqueada_ate end
+    where token = p_token;
+    -- o erro precisa ir para o site, mas a contagem de falhas tem que ficar gravada
+    perform _log(p_token, u, 'autorizacao_negada');
+    return null;
+  end if;
+  update sessoes set falhas_autorizacao = 0 where token = p_token;
+  return a;
 end $$;
 
 -- Registra uma ação no log de auditoria. Se a sessão for de suporte, o registro diz isso.
@@ -587,73 +712,94 @@ end $$;
 
 -- ---------- Garçom ----------
 
-create or replace function adicionar_item(p_token uuid, p_mesa int, p_produto int, p_obs text default '') returns jsonb
+create or replace function adicionar_item(
+  p_token uuid, p_mesa int, p_produto int, p_obs text default '', p_opcoes int[] default '{}'
+) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
+  p produtos;
+  v_snapshot jsonb;
+  v_chave text;
 begin
-  u := _sessao(p_token, array['garcom']);
+  u := _sessao(p_token, array['garcom', 'caixa']);
   perform _checar_mesa(u.empresa_id, p_mesa);
-  if not exists (select 1 from produtos where empresa_id = u.empresa_id and id = p_produto and ativo) then
+  select * into p from produtos where empresa_id = u.empresa_id and id = p_produto and ativo;
+  if p.id is null then
     raise exception 'PRODUTO_INVALIDO';
   end if;
+  if not p.disponivel then
+    raise exception 'PRODUTO_ESGOTADO';
+  end if;
+  v_snapshot := _opcoes_validas(u.empresa_id, p_produto, p_opcoes);
+  v_chave := coalesce((select string_agg(x::text, ',' order by x) from unnest(p_opcoes) x), '');
 
-  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, qtd)
-  values (u.empresa_id, p_mesa, p_produto, left(trim(coalesce(p_obs, '')), 100), 1)
-  on conflict (empresa_id, mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + 1;
+  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, opcoes, opcoes_chave, qtd)
+  values (u.empresa_id, p_mesa, p_produto, left(trim(coalesce(p_obs, '')), 100), v_snapshot, v_chave, 1)
+  on conflict (empresa_id, mesa_numero, produto_id, obs, opcoes_chave) do update set qtd = rascunho_itens.qtd + 1;
 
   update mesas set aberta_em = coalesce(aberta_em, now()), atendente_id = coalesce(atendente_id, u.id)
   where empresa_id = u.empresa_id and numero = p_mesa;
   return estado(p_token);
 end $$;
 
-create or replace function remover_item(p_token uuid, p_mesa int, p_produto int, p_obs text default '') returns jsonb
+create or replace function remover_item(
+  p_token uuid, p_mesa int, p_produto int, p_obs text default '', p_opcoes_chave text default ''
+) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
   v_obs text := coalesce(p_obs, '');
+  v_chave text := coalesce(p_opcoes_chave, '');
 begin
-  u := _sessao(p_token, array['garcom']);
+  u := _sessao(p_token, array['garcom', 'caixa']);
   delete from rascunho_itens
-  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto and obs = v_obs and qtd <= 1;
+  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto
+    and obs = v_obs and opcoes_chave = v_chave and qtd <= 1;
   update rascunho_itens set qtd = qtd - 1
-  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto and obs = v_obs;
+  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto
+    and obs = v_obs and opcoes_chave = v_chave;
   perform _liberar_se_vazia(u.empresa_id, p_mesa);
   return estado(p_token);
 end $$;
 
 -- Coloca observação em parte das unidades de um item (ex.: 1 dos 3 hambúrgueres "sem cebola").
+-- Coloca observação em parte das unidades de um item (ex.: 1 dos 3 hambúrgueres "sem cebola").
 create or replace function observacao_item(
-  p_token uuid, p_mesa int, p_produto int, p_obs_antiga text, p_obs_nova text, p_qtd int
+  p_token uuid, p_mesa int, p_produto int, p_obs_antiga text, p_obs_nova text, p_qtd int, p_opcoes_chave text default ''
 ) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
+  r rascunho_itens;
   v_antiga text := coalesce(p_obs_antiga, '');
   v_nova text := left(trim(coalesce(p_obs_nova, '')), 100);
-  v_atual int;
+  v_chave text := coalesce(p_opcoes_chave, '');
   v_qtd int;
 begin
-  u := _sessao(p_token, array['garcom']);
-  select qtd into v_atual from rascunho_itens
-  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  select * into r from rascunho_itens
+  where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto
+    and obs = v_antiga and opcoes_chave = v_chave
   for update;
-  if v_atual is null or v_nova = v_antiga then
+  if r.qtd is null or v_nova = v_antiga then
     return estado(p_token);
   end if;
 
-  v_qtd := least(greatest(coalesce(p_qtd, 1), 1), v_atual);
-  if v_qtd = v_atual then
+  v_qtd := least(greatest(coalesce(p_qtd, 1), 1), r.qtd);
+  if v_qtd = r.qtd then
     delete from rascunho_itens
-    where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga;
+    where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto
+      and obs = v_antiga and opcoes_chave = v_chave;
   else
     update rascunho_itens set qtd = qtd - v_qtd
-    where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto and obs = v_antiga;
+    where empresa_id = u.empresa_id and mesa_numero = p_mesa and produto_id = p_produto
+      and obs = v_antiga and opcoes_chave = v_chave;
   end if;
 
-  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, qtd)
-  values (u.empresa_id, p_mesa, p_produto, v_nova, v_qtd)
-  on conflict (empresa_id, mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + excluded.qtd;
+  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, opcoes, opcoes_chave, qtd)
+  values (u.empresa_id, p_mesa, p_produto, v_nova, r.opcoes, v_chave, v_qtd)
+  on conflict (empresa_id, mesa_numero, produto_id, obs, opcoes_chave) do update set qtd = rascunho_itens.qtd + excluded.qtd;
   return estado(p_token);
 end $$;
 
@@ -662,7 +808,7 @@ language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
 begin
-  u := _sessao(p_token, array['garcom']);
+  u := _sessao(p_token, array['garcom', 'caixa']);
   delete from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_mesa;
   update mesas set observacao = '' where empresa_id = u.empresa_id and numero = p_mesa;
   perform _liberar_se_vazia(u.empresa_id, p_mesa);
@@ -674,7 +820,7 @@ language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
 begin
-  u := _sessao(p_token, array['garcom']);
+  u := _sessao(p_token, array['garcom', 'caixa']);
   update mesas set observacao = left(coalesce(p_observacao, ''), 200)
   where empresa_id = u.empresa_id and numero = p_mesa;
   return estado(p_token);
@@ -687,8 +833,8 @@ declare
   m mesas;
   v_comanda uuid;
 begin
-  u := _sessao(p_token, array['garcom']);
-  select * into m from mesas where empresa_id = u.empresa_id and numero = p_mesa for update;
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  select * into m from mesas where empresa_id = u.empresa_id and numero = p_mesa and ativa for update;
   if not found then
     raise exception 'MESA_INVALIDA';
   end if;
@@ -708,11 +854,14 @@ begin
   )
   returning id into v_comanda;
 
-  insert into comanda_itens (empresa_id, comanda_id, produto_id, nome, preco, qtd, obs)
-  select u.empresa_id, v_comanda, p.id, p.nome, p.preco, r.qtd, r.obs
+  -- Preço de cada unidade = produto + extras escolhidos (foto do momento do pedido).
+  insert into comanda_itens (empresa_id, comanda_id, produto_id, nome, preco, qtd, obs, opcoes)
+  select u.empresa_id, v_comanda, p.id, p.nome,
+         p.preco + coalesce((select sum((o ->> 'preco')::numeric) from jsonb_array_elements(r.opcoes) o), 0),
+         r.qtd, r.obs, r.opcoes
   from rascunho_itens r join produtos p on p.empresa_id = r.empresa_id and p.id = r.produto_id
   where r.empresa_id = u.empresa_id and r.mesa_numero = p_mesa
-  order by r.adicionado_em, p.id, r.obs;
+  order by r.adicionado_em, p.id, r.obs, r.opcoes_chave;
 
   delete from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_mesa;
   update mesas set observacao = '', aberta_em = coalesce(aberta_em, now()),
@@ -721,20 +870,135 @@ begin
   return estado(p_token);
 end $$;
 
-create or replace function cancelar_comanda(p_token uuid, p_comanda uuid) returns jsonb
+create or replace function cancelar_comanda(
+  p_token uuid, p_comanda uuid, p_motivo text default null, p_pin_admin text default null
+) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
-  v_mesa int;
+  a funcionarios;
+  c comandas;
 begin
-  u := _sessao(p_token, array['garcom']);
-  delete from comandas
-  where empresa_id = u.empresa_id and id = p_comanda and status = 'preparo' and venda_id is null
-  returning mesa_numero into v_mesa;
-  if v_mesa is not null then
-    perform _liberar_se_vazia(u.empresa_id, v_mesa);
-    perform _log(p_token, u, 'pedido_cancelado', jsonb_build_object('mesa', v_mesa, 'comanda', p_comanda));
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  select * into c from comandas where empresa_id = u.empresa_id and id = p_comanda and venda_id is null for update;
+  if c.id is null then
+    return estado(p_token);
   end if;
+  if length(trim(coalesce(p_motivo, ''))) < 3 then
+    raise exception 'MOTIVO_OBRIGATORIO';
+  end if;
+  a := _autorizar_admin(p_token, u, p_pin_admin);
+  if a.id is null then
+    -- Sem "raise": a contagem de tentativas erradas precisa ficar gravada.
+    return estado(p_token) || '{"erro": "PIN_ADMIN_INCORRETO"}'::jsonb;
+  end if;
+  perform _log(p_token, u, 'pedido_cancelado', jsonb_build_object(
+    'mesa', c.mesa_numero, 'pedido', c.numero, 'motivo', trim(p_motivo), 'autorizado_por', a.nome,
+    'itens', (select string_agg(qtd || 'x ' || nome, ', ' order by id) from comanda_itens where comanda_id = c.id),
+    'valor', (select sum(preco * qtd) from comanda_itens where comanda_id = c.id)));
+  delete from comandas where id = c.id;
+  perform _liberar_se_vazia(u.empresa_id, c.mesa_numero);
+  return estado(p_token);
+end $$;
+
+-- Cancela parte de um item já enviado (ex.: 1 de 2 refrigerantes). Exige motivo e autorização de admin.
+create or replace function cancelar_item(
+  p_token uuid, p_item int, p_qtd int, p_motivo text, p_pin_admin text default null
+) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+  a funcionarios;
+  i comanda_itens;
+  c comandas;
+  v_qtd int;
+begin
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  select ci.* into i from comanda_itens ci
+  join comandas co on co.empresa_id = ci.empresa_id and co.id = ci.comanda_id
+  where ci.empresa_id = u.empresa_id and ci.id = p_item and co.venda_id is null
+  for update of ci;
+  if i.id is null then
+    raise exception 'ITEM_INVALIDO';
+  end if;
+  if length(trim(coalesce(p_motivo, ''))) < 3 then
+    raise exception 'MOTIVO_OBRIGATORIO';
+  end if;
+  a := _autorizar_admin(p_token, u, p_pin_admin);
+  if a.id is null then
+    -- Sem "raise": a contagem de tentativas erradas precisa ficar gravada.
+    return estado(p_token) || '{"erro": "PIN_ADMIN_INCORRETO"}'::jsonb;
+  end if;
+  v_qtd := least(greatest(coalesce(p_qtd, 1), 1), i.qtd);
+  select * into c from comandas where id = i.comanda_id;
+  perform _log(p_token, u, 'item_cancelado', jsonb_build_object(
+    'mesa', c.mesa_numero, 'produto', i.nome, 'quantidade', v_qtd, 'valor', i.preco * v_qtd,
+    'motivo', trim(p_motivo), 'autorizado_por', a.nome));
+  if v_qtd = i.qtd then
+    delete from comanda_itens where id = i.id;
+  else
+    update comanda_itens set qtd = qtd - v_qtd where id = i.id;
+  end if;
+  -- Pedido que ficou sem nenhum item some; mesa vazia é liberada.
+  delete from comandas where id = c.id and not exists (select 1 from comanda_itens where comanda_id = c.id);
+  perform _liberar_se_vazia(u.empresa_id, c.mesa_numero);
+  return estado(p_token);
+end $$;
+
+-- Confere o PIN de um admin antes de abrir a tela de desconto/cancelamento (para avisar na hora).
+create or replace function conferir_pin_admin(p_token uuid, p_pin text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+  a funcionarios;
+begin
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  a := _autorizar_admin(p_token, u, p_pin);
+  if a.id is null then
+    return jsonb_build_object('ok', false, 'erro', 'PIN_ADMIN_INCORRETO');
+  end if;
+  return jsonb_build_object('ok', true, 'admin', a.nome);
+exception when others then
+  if sqlerrm like '%AUTORIZACAO_BLOQUEADA%' then
+    return jsonb_build_object('ok', false, 'erro', 'AUTORIZACAO_BLOQUEADA');
+  end if;
+  raise;
+end $$;
+
+-- Pedido de balcão ou retirada (sem mesa). Ganha um número interno (1001, 1002…) e uma senha do dia.
+create or replace function abrir_balcao(p_token uuid, p_tipo text, p_cliente text default null) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+  v_numero int;
+  v_senha int;
+begin
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  if p_tipo not in ('balcao', 'retirada') then
+    raise exception 'TIPO_INVALIDO';
+  end if;
+  perform 1 from empresas where id = u.empresa_id for update; -- um de cada vez, para a senha não repetir
+  select greatest(1000, coalesce(max(numero), 0)) + 1 into v_numero from mesas where empresa_id = u.empresa_id;
+  select count(*) + 1 into v_senha from mesas
+  where empresa_id = u.empresa_id and tipo <> 'mesa' and criada_em >= _hoje();
+  insert into mesas (empresa_id, numero, tipo, cliente, senha, aberta_em, atendente_id)
+  values (u.empresa_id, v_numero, p_tipo, nullif(left(trim(coalesce(p_cliente, '')), 40), ''), v_senha, now(), u.id);
+  return estado(p_token) || jsonb_build_object('criado', v_numero);
+end $$;
+
+-- Desiste de um pedido de balcão que ainda não foi para a cozinha.
+create or replace function cancelar_balcao(p_token uuid, p_mesa int) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+begin
+  u := _sessao(p_token, array['garcom', 'caixa']);
+  if exists (select 1 from comandas where empresa_id = u.empresa_id and mesa_numero = p_mesa and venda_id is null) then
+    raise exception 'BALCAO_COM_PEDIDOS';
+  end if;
+  delete from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_mesa;
+  update mesas set ativa = false, aberta_em = null, atendente_id = null
+  where empresa_id = u.empresa_id and numero = p_mesa and tipo <> 'mesa';
   return estado(p_token);
 end $$;
 
@@ -772,10 +1036,10 @@ begin
   update comandas set mesa_numero = p_destino, numero = numero + v_base
   where empresa_id = u.empresa_id and mesa_numero = p_origem and venda_id is null;
 
-  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, qtd, adicionado_em)
-  select empresa_id, p_destino, produto_id, obs, qtd, adicionado_em
+  insert into rascunho_itens (empresa_id, mesa_numero, produto_id, obs, opcoes, opcoes_chave, qtd, adicionado_em)
+  select empresa_id, p_destino, produto_id, obs, opcoes, opcoes_chave, qtd, adicionado_em
   from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_origem
-  on conflict (empresa_id, mesa_numero, produto_id, obs) do update set qtd = rascunho_itens.qtd + excluded.qtd;
+  on conflict (empresa_id, mesa_numero, produto_id, obs, opcoes_chave) do update set qtd = rascunho_itens.qtd + excluded.qtd;
   delete from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_origem;
 
   update mesas set
@@ -783,7 +1047,8 @@ begin
     atendente_id = coalesce(d.atendente_id, o.atendente_id),
     observacao   = concat_ws(' · ', nullif(trim(d.observacao), ''), nullif(trim(o.observacao), ''))
   where empresa_id = u.empresa_id and numero = p_destino;
-  update mesas set aberta_em = null, atendente_id = null, observacao = ''
+  update mesas set aberta_em = null, atendente_id = null, observacao = '',
+                   ativa = case when tipo = 'mesa' then ativa else false end
   where empresa_id = u.empresa_id and numero = p_origem;
   return estado(p_token);
 end $$;
@@ -825,22 +1090,28 @@ end $$;
 -- ---------- Caixa ----------
 
 -- p_pagamentos: [{"forma": "dinheiro", "valor": 20}, {"forma": "debito", "valor": 5}, ...]
+-- p_pagamentos: [{"forma": "dinheiro", "valor": 20}, {"forma": "debito", "valor": 5}, ...]
+-- Desconto (em R$): exige motivo e autorização de admin (PIN, ou o próprio usuário se for admin).
 create or replace function finalizar_conta(
-  p_token uuid, p_mesa int, p_com_taxa boolean, p_pessoas int, p_pagamentos jsonb
+  p_token uuid, p_mesa int, p_com_taxa boolean, p_pessoas int, p_pagamentos jsonb,
+  p_desconto numeric default 0, p_desconto_motivo text default null, p_pin_admin text default null
 ) returns jsonb
 language plpgsql security definer set search_path = public, extensions as $$
 declare
   u funcionarios;
+  a funcionarios;
   m mesas;
   v_taxa_pct numeric;
   v_subtotal numeric(10, 2);
   v_taxa numeric(10, 2);
+  v_desconto numeric(10, 2) := round(coalesce(p_desconto, 0), 2);
   v_total numeric(10, 2);
   v_pago numeric(10, 2);
   v_dinheiro numeric(10, 2);
   v_formas int;
   v_forma_unica text;
   v_venda uuid;
+  v_rotulo text;
 begin
   u := _sessao(p_token, array['caixa']);
   select * into m from mesas where empresa_id = u.empresa_id and numero = p_mesa for update;
@@ -869,7 +1140,20 @@ begin
 
   select taxa_servico into v_taxa_pct from empresas where id = u.empresa_id;
   v_taxa := case when p_com_taxa then round(v_subtotal * v_taxa_pct, 2) else 0 end;
-  v_total := v_subtotal + v_taxa;
+
+  if v_desconto < 0 or v_desconto > v_subtotal + v_taxa then
+    raise exception 'DESCONTO_INVALIDO';
+  end if;
+  if v_desconto > 0 then
+    if length(trim(coalesce(p_desconto_motivo, ''))) < 3 then
+      raise exception 'MOTIVO_OBRIGATORIO';
+    end if;
+    a := _autorizar_admin(p_token, u, p_pin_admin);
+    if a.id is null then
+      return estado(p_token) || '{"erro": "PIN_ADMIN_INCORRETO"}'::jsonb;
+    end if;
+  end if;
+  v_total := v_subtotal + v_taxa - v_desconto;
 
   select sum(round((p->>'valor')::numeric, 2)),
          coalesce(sum(round((p->>'valor')::numeric, 2)) filter (where p->>'forma' = 'dinheiro'), 0),
@@ -886,16 +1170,24 @@ begin
     raise exception 'PAGAMENTO_EXCEDENTE';
   end if;
 
+  v_rotulo := case m.tipo
+    when 'mesa' then 'Mesa ' || m.numero
+    else (case m.tipo when 'balcao' then 'Balcão' else 'Retirada' end) || ' #' || m.senha
+         || coalesce(' · ' || m.cliente, '')
+  end;
+
   insert into vendas (
     empresa_id, mesa_numero, subtotal, taxa, total, forma_pagamento, pessoas, recebido, troco,
-    aberta_em, atendente_id, atendente_nome, operador_id, operador_nome
+    aberta_em, atendente_id, atendente_nome, operador_id, operador_nome,
+    rotulo, desconto, desconto_motivo, desconto_por
   ) values (
     u.empresa_id, p_mesa, v_subtotal, v_taxa, v_total,
     case when v_formas = 1 then v_forma_unica else 'misto' end,
     greatest(coalesce(p_pessoas, 1), 1),
     v_pago, v_pago - v_total,
     m.aberta_em, m.atendente_id, (select nome from funcionarios where id = m.atendente_id),
-    u.id, u.nome
+    u.id, u.nome,
+    v_rotulo, v_desconto, nullif(trim(coalesce(p_desconto_motivo, '')), ''), a.nome
   ) returning id into v_venda;
 
   insert into venda_pagamentos (empresa_id, venda_id, forma, valor)
@@ -903,10 +1195,17 @@ begin
   from jsonb_array_elements(p_pagamentos) p
   group by p->>'forma';
 
+  if v_desconto > 0 then
+    perform _log(p_token, u, 'desconto_aplicado', jsonb_build_object(
+      'mesa', v_rotulo, 'valor', v_desconto, 'total', v_total, 'motivo', trim(p_desconto_motivo), 'autorizado_por', a.nome));
+  end if;
+
   update comandas set venda_id = v_venda
   where empresa_id = u.empresa_id and mesa_numero = p_mesa and venda_id is null;
   delete from rascunho_itens where empresa_id = u.empresa_id and mesa_numero = p_mesa;
-  update mesas set aberta_em = null, atendente_id = null, observacao = ''
+  -- Mesa volta a ficar livre; pedido de balcão/retirada sai da tela.
+  update mesas set aberta_em = null, atendente_id = null, observacao = '',
+                   ativa = case when tipo = 'mesa' then ativa else false end
   where empresa_id = u.empresa_id and numero = p_mesa;
   return estado(p_token);
 end $$;
@@ -1062,10 +1361,10 @@ begin
   if p_quantidade is null or p_quantidade < 1 or p_quantidade > 60 then
     raise exception 'MESAS_INVALIDAS';
   end if;
-  perform 1 from mesas where empresa_id = u.empresa_id order by numero for update;
+  perform 1 from mesas where empresa_id = u.empresa_id and tipo = 'mesa' order by numero for update;
   if exists (
     select 1 from mesas m
-    where m.empresa_id = u.empresa_id and m.numero > p_quantidade and m.ativa
+    where m.empresa_id = u.empresa_id and m.tipo = 'mesa' and m.numero > p_quantidade and m.ativa
       and (exists (select 1 from rascunho_itens r where r.empresa_id = m.empresa_id and r.mesa_numero = m.numero)
            or exists (select 1 from comandas c where c.empresa_id = m.empresa_id and c.mesa_numero = m.numero and c.venda_id is null))
   ) then
@@ -1074,7 +1373,7 @@ begin
   insert into mesas (empresa_id, numero)
   select u.empresa_id, generate_series(1, p_quantidade)
   on conflict (empresa_id, numero) do nothing;
-  update mesas set ativa = (numero <= p_quantidade) where empresa_id = u.empresa_id;
+  update mesas set ativa = (numero <= p_quantidade) where empresa_id = u.empresa_id and tipo = 'mesa';
   perform _log(p_token, u, 'mesas_definidas', jsonb_build_object('quantidade', p_quantidade));
   return estado(p_token);
 end $$;
@@ -1206,6 +1505,71 @@ begin
   return estado(p_token);
 end $$;
 
+-- Marca o produto como esgotado (ou disponível de novo). Cozinha, garçom e admin podem.
+create or replace function marcar_esgotado(p_token uuid, p_produto int, p_esgotado boolean) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+  v_nome text;
+begin
+  u := _sessao(p_token, array['cozinha', 'garcom']);
+  update produtos set disponivel = not coalesce(p_esgotado, true)
+  where empresa_id = u.empresa_id and id = p_produto and ativo and disponivel = coalesce(p_esgotado, true)
+  returning nome into v_nome;
+  if v_nome is not null then
+    perform _log(p_token, u, case when p_esgotado then 'produto_esgotado' else 'produto_disponivel' end,
+                 jsonb_build_object('produto', v_nome));
+  end if;
+  return estado(p_token);
+end $$;
+
+-- Troca as variações/adicionais de um produto.
+-- p_grupos: [{"nome": "Ponto", "obrigatorio": true, "maximo": 1, "opcoes": [{"nome": "Mal passada", "preco": 0}, ...]}, ...]
+create or replace function salvar_opcoes_produto(p_token uuid, p_produto int, p_grupos jsonb) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+declare
+  u funcionarios;
+  g jsonb;
+  o jsonb;
+  v_grupo int;
+  v_ordem int := 0;
+  v_ordem_opcao int;
+  v_nome text;
+begin
+  u := _sessao(p_token, array['admin']);
+  select nome into v_nome from produtos where empresa_id = u.empresa_id and id = p_produto and ativo;
+  if v_nome is null then
+    raise exception 'PRODUTO_INVALIDO';
+  end if;
+  if p_grupos is null or jsonb_typeof(p_grupos) <> 'array' or jsonb_array_length(p_grupos) > 10 then
+    raise exception 'OPCOES_INVALIDAS';
+  end if;
+  delete from grupos_opcoes where empresa_id = u.empresa_id and produto_id = p_produto;
+  for g in select * from jsonb_array_elements(p_grupos) loop
+    if length(trim(coalesce(g ->> 'nome', ''))) not between 1 and 40
+       or jsonb_typeof(g -> 'opcoes') <> 'array' or jsonb_array_length(g -> 'opcoes') not between 1 and 30 then
+      raise exception 'OPCOES_INVALIDAS';
+    end if;
+    v_ordem := v_ordem + 1;
+    insert into grupos_opcoes (empresa_id, produto_id, nome, obrigatorio, maximo, ordem)
+    values (u.empresa_id, p_produto, trim(g ->> 'nome'), coalesce((g ->> 'obrigatorio')::boolean, false),
+            least(greatest(coalesce((g ->> 'maximo')::int, 1), 1), 20), v_ordem)
+    returning id into v_grupo;
+    v_ordem_opcao := 0;
+    for o in select * from jsonb_array_elements(g -> 'opcoes') loop
+      if length(trim(coalesce(o ->> 'nome', ''))) not between 1 and 40
+         or coalesce((o ->> 'preco')::numeric, 0) < 0 or coalesce((o ->> 'preco')::numeric, 0) > 9999 then
+        raise exception 'OPCOES_INVALIDAS';
+      end if;
+      v_ordem_opcao := v_ordem_opcao + 1;
+      insert into opcoes (empresa_id, grupo_id, nome, preco, ordem)
+      values (u.empresa_id, v_grupo, trim(o ->> 'nome'), round(coalesce((o ->> 'preco')::numeric, 0), 2), v_ordem_opcao);
+    end loop;
+  end loop;
+  perform _log(p_token, u, 'opcoes_alteradas', jsonb_build_object('produto', v_nome, 'grupos', jsonb_array_length(p_grupos)));
+  return estado(p_token);
+end $$;
+
 -- ---------- Relatórios ----------
 
 -- Todas as vendas do período (inclusive de caixas já fechados) e os fechamentos de caixa.
@@ -1282,7 +1646,7 @@ begin
     select jsonb_agg(jsonb_build_object(
       'id', e.id, 'nome', e.nome, 'slug', e.slug, 'cnpj', e.cnpj, 'status', e.status, 'plano', e.plano,
       'taxaServico', e.taxa_servico, 'criadaEm', _ms(e.criada_em), 'ultimoAcesso', _ms(e.ultimo_acesso),
-      'mesas', (select count(*) from mesas m where m.empresa_id = e.id and m.ativa),
+      'mesas', (select count(*) from mesas m where m.empresa_id = e.id and m.ativa and m.tipo = 'mesa'),
       'mesasAbertas', (select count(*) from mesas m where m.empresa_id = e.id and m.ativa and m.aberta_em is not null),
       'emAberto', (select coalesce(sum(ci.preco * ci.qtd), 0) from comandas c
                    join comanda_itens ci on ci.empresa_id = c.empresa_id and ci.comanda_id = c.id
@@ -1550,7 +1914,8 @@ grant execute on function
   mudar_status_comanda, finalizar_conta, fechar_caixa,
   criar_funcionario, editar_funcionario, remover_funcionario,
   configurar_empresa, definir_mesas, salvar_categoria, remover_categoria, mover_categoria, salvar_produto, remover_produto,
-  relatorio
+  relatorio,
+  cancelar_item, conferir_pin_admin, abrir_balcao, cancelar_balcao, marcar_esgotado, salvar_opcoes_produto
 to anon, authenticated;
 
 -- Portal do dono do sistema: só para quem fez login por e-mail (e cada função confere se é super admin).

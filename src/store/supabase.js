@@ -37,6 +37,15 @@ const MENSAGENS = {
   EMPRESA_INVALIDA: "Restaurante não encontrado. Confira o código.",
   EMPRESA_SUSPENSA: "Este restaurante está suspenso. Fale com o suporte.",
   TAXA_INVALIDA: "A taxa de serviço precisa ficar entre 0% e 30%.",
+  PRODUTO_ESGOTADO: "Esse produto está esgotado.",
+  OPCOES_INVALIDAS: "Confira as opções escolhidas (alguma obrigatória ficou de fora ou passou do limite).",
+  PIN_ADMIN_INCORRETO: "PIN de administrador incorreto.",
+  AUTORIZACAO_BLOQUEADA: "Muitos PINs errados. Aguarde 5 minutos para tentar de novo.",
+  MOTIVO_OBRIGATORIO: "Informe o motivo.",
+  DESCONTO_INVALIDO: "O desconto não pode ser maior que a conta.",
+  ITEM_INVALIDO: "Esse item não existe mais.",
+  BALCAO_COM_PEDIDOS: "Esse pedido já foi para a cozinha. Cancele os itens antes.",
+  TIPO_INVALIDO: "Tipo de pedido inválido.",
   MESA_OCUPADA: "Não dá para tirar mesas que estão ocupadas. Feche a conta delas antes.",
   MESA_VAZIA: "Essa mesa não tem nada para transferir.",
   MESAS_INVALIDAS: "Quantidade de mesas inválida.",
@@ -61,9 +70,20 @@ export function acaoParaRpc(acao) {
   const vazioParaNull = (v) => (v === undefined ? null : v);
   switch (acao.type) {
     case "ADICIONAR_ITEM":
-      return ["adicionar_item", { p_mesa: acao.mesaId, p_produto: acao.produto.id, p_obs: acao.obs ?? "" }];
+      return [
+        "adicionar_item",
+        {
+          p_mesa: acao.mesaId,
+          p_produto: acao.produto.id,
+          p_obs: acao.obs ?? "",
+          p_opcoes: (acao.opcoes ?? []).map((o) => o.id),
+        },
+      ];
     case "REMOVER_ITEM":
-      return ["remover_item", { p_mesa: acao.mesaId, p_produto: acao.produtoId, p_obs: acao.obs ?? "" }];
+      return [
+        "remover_item",
+        { p_mesa: acao.mesaId, p_produto: acao.produtoId, p_obs: acao.obs ?? "", p_opcoes_chave: acao.opcoesChave ?? "" },
+      ];
     case "OBSERVACAO_ITEM":
       return [
         "observacao_item",
@@ -73,6 +93,7 @@ export function acaoParaRpc(acao) {
           p_obs_antiga: acao.obsAntiga,
           p_obs_nova: acao.obs,
           p_qtd: acao.qtd,
+          p_opcoes_chave: acao.opcoesChave ?? "",
         },
       ];
     case "TRANSFERIR_MESA":
@@ -107,7 +128,29 @@ export function acaoParaRpc(acao) {
     case "MARCAR_ENTREGUE":
       return ["mudar_status_comanda", { p_comanda: acao.comandaId, p_status: "entregue" }];
     case "CANCELAR_COMANDA":
-      return ["cancelar_comanda", { p_comanda: acao.comandaId }];
+      return ["cancelar_comanda", { p_comanda: acao.comandaId, p_motivo: acao.motivo, p_pin_admin: vazioParaNull(acao.pin) }];
+    case "CANCELAR_ITEM":
+      return [
+        "cancelar_item",
+        { p_item: acao.itemId, p_qtd: acao.qtd, p_motivo: acao.motivo, p_pin_admin: vazioParaNull(acao.pin) },
+      ];
+    case "CANCELAR_BALCAO":
+      return ["cancelar_balcao", { p_mesa: acao.mesaId }];
+    case "MARCAR_ESGOTADO":
+      return ["marcar_esgotado", { p_produto: acao.produtoId, p_esgotado: acao.esgotado }];
+    case "SALVAR_OPCOES_PRODUTO":
+      return [
+        "salvar_opcoes_produto",
+        {
+          p_produto: acao.produtoId,
+          p_grupos: acao.grupos.map((g) => ({
+            nome: g.nome,
+            obrigatorio: g.obrigatorio,
+            maximo: g.maximo,
+            opcoes: g.opcoes.map((o) => ({ nome: o.nome, preco: Number(o.preco) || 0 })),
+          })),
+        },
+      ];
     case "FINALIZAR_CONTA":
       return [
         "finalizar_conta",
@@ -116,6 +159,9 @@ export function acaoParaRpc(acao) {
           p_com_taxa: acao.comTaxa,
           p_pessoas: acao.pessoas,
           p_pagamentos: acao.pagamentos,
+          p_desconto: acao.desconto ?? 0,
+          p_desconto_motivo: vazioParaNull(acao.descontoMotivo),
+          p_pin_admin: vazioParaNull(acao.pin),
         },
       ];
     case "FECHAR_CAIXA":

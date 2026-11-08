@@ -1,6 +1,19 @@
 import { useMemo, useState } from "react";
 import { useAviso, useRestaurante } from "../store/contexto";
-import { contarItens, itensConsumidos, mesaOcupada, somaItens, totalMesa } from "../store/regras";
+import {
+  chaveItem,
+  contarItens,
+  descreverItem,
+  descreverOpcoes,
+  itensConsumidos,
+  mesaOcupada,
+  mesasDoSalao,
+  rotuloMesa,
+  somaItens,
+  totalMesa,
+} from "../store/regras";
+import ModalOpcoes from "../components/ModalOpcoes";
+import ModalAutorizacao from "../components/ModalAutorizacao";
 import { hora, moeda, plural, tempoDecorrido } from "../utils/format";
 import useAgora from "../hooks/useAgora";
 import {
@@ -88,9 +101,9 @@ function ModalObservacao({ item, onSalvar, onFechar }) {
 
 /** Escolher para qual mesa levar a conta. Mesa livre = mover; mesa ocupada = juntar. */
 function ModalTransferir({ mesa, mesas, onEscolher, onFechar }) {
-  const outras = mesas.filter((m) => m.id !== mesa.id);
+  const outras = mesasDoSalao(mesas).filter((m) => m.id !== mesa.id);
   return (
-    <Modal aberto titulo={`Trocar a mesa ${mesa.numero} de lugar`} onFechar={onFechar}>
+    <Modal aberto titulo={`Trocar ${rotuloMesa(mesa)} de lugar`} onFechar={onFechar}>
       <p className="text-sm text-zinc-400 mb-4">
         Escolha uma mesa <strong className="text-zinc-200">livre</strong> para mudar o cliente de lugar, ou uma mesa{" "}
         <strong className="text-orange-400">ocupada</strong> para juntar as duas contas.
@@ -127,7 +140,7 @@ const statusComanda = {
   entregue: <Etiqueta>Servido</Etiqueta>,
 };
 
-export default function Mesa({ mesaId, navegar }) {
+export default function Mesa({ mesaId, navegar, voltarPara = "garcom" }) {
   const {
     mesas,
     cardapio,
@@ -140,6 +153,8 @@ export default function Mesa({ mesaId, navegar }) {
     cancelarComanda,
     observacaoItem,
     transferirMesa,
+    cancelarItem,
+    cancelarBalcao,
   } = useRestaurante();
   const agora = useAgora();
   const aviso = useAviso();
@@ -147,6 +162,8 @@ export default function Mesa({ mesaId, navegar }) {
   const [busca, setBusca] = useState("");
   const [itemObs, setItemObs] = useState(null); // linha do pedido com a janela de observação aberta
   const [transferindo, setTransferindo] = useState(false);
+  const [produtoOpcoes, setProdutoOpcoes] = useState(null); // produto com a janela de opções aberta
+  const [cancelando, setCancelando] = useState(null); // { comanda, item? }
 
   const mesa = mesas.find((m) => m.id === mesaId);
 
@@ -161,8 +178,8 @@ export default function Mesa({ mesaId, navegar }) {
   if (!mesa) {
     return (
       <Pagina>
-        <Cabecalho titulo="Mesa não encontrada">
-          <BotaoVoltar onClick={() => navegar("garcom")} />
+        <Cabecalho titulo="Pedido não encontrado">
+          <BotaoVoltar onClick={() => navegar(voltarPara)} />
         </Cabecalho>
       </Pagina>
     );
@@ -175,47 +192,99 @@ export default function Mesa({ mesaId, navegar }) {
   function transferirPara(destino) {
     const juntar = mesaOcupada(destino);
     const pergunta = juntar
-      ? `Juntar a conta da mesa ${mesa.numero} com a da mesa ${destino.numero}? Tudo vai ficar na mesa ${destino.numero}.`
-      : `Mudar o cliente da mesa ${mesa.numero} para a mesa ${destino.numero}?`;
+      ? `Juntar a conta de ${rotuloMesa(mesa)} com a da mesa ${destino.numero}? Tudo vai ficar na mesa ${destino.numero}.`
+      : `Levar ${rotuloMesa(mesa)} para a mesa ${destino.numero}?`;
     if (!window.confirm(pergunta)) return;
     transferirMesa(mesa.id, destino.id);
     setTransferindo(false);
-    aviso(juntar ? `Mesas ${mesa.numero} e ${destino.numero} juntadas.` : `Conta levada para a mesa ${destino.numero}.`);
-    navegar("garcom", destino.id);
+    aviso(juntar ? `${rotuloMesa(mesa)} e mesa ${destino.numero} juntadas.` : `Conta levada para a mesa ${destino.numero}.`);
+    if (voltarPara === "garcom") navegar("garcom", destino.id);
+    else navegar(voltarPara);
   }
+  const balcao = (mesa.tipo ?? "mesa") !== "mesa";
   const totalRascunho = somaItens(mesa.rascunho);
   const temRascunho = mesa.rascunho.length > 0;
 
   return (
     <Pagina className={temRascunho ? "pb-28" : ""}>
       <Cabecalho
-        titulo={`Mesa ${mesa.numero}`}
+        titulo={rotuloMesa(mesa)}
         subtitulo={
           mesa.abertaEm
-            ? `Aberta às ${hora(mesa.abertaEm)} · ${tempoDecorrido(mesa.abertaEm, agora)}${
+            ? `${balcao ? "Aberto" : "Aberta"} às ${hora(mesa.abertaEm)} · ${tempoDecorrido(mesa.abertaEm, agora)}${
                 mesa.atendente ? ` · ${mesa.atendente.nome}` : ""
               }`
             : "Livre — adicione itens para abrir"
         }
       >
+        {balcao && mesa.comandas.length === 0 && (
+          <Botao
+            variante="fantasma"
+            className="px-3 py-2 text-sm"
+            onClick={() => {
+              if (!window.confirm(`Desistir do ${rotuloMesa(mesa)}?`)) return;
+              cancelarBalcao(mesa.id);
+              aviso("Pedido de balcão cancelado.", { tipo: "info" });
+              navegar(voltarPara);
+            }}
+          >
+            Desistir
+          </Botao>
+        )}
         {mesaOcupada(mesa) && (
           <Botao className="px-3 py-2 text-sm" onClick={() => setTransferindo(true)} title="Mudar de mesa ou juntar com outra">
             ⇄ Trocar
           </Botao>
         )}
-        <BotaoVoltar onClick={() => navegar("garcom")} />
+        <BotaoVoltar onClick={() => navegar(voltarPara)} />
       </Cabecalho>
 
+      {produtoOpcoes && (
+        <ModalOpcoes
+          produto={produtoOpcoes}
+          onFechar={() => setProdutoOpcoes(null)}
+          onAdicionar={(opcoes) => {
+            adicionarItem(mesa.id, produtoOpcoes, "", opcoes);
+            setProdutoOpcoes(null);
+          }}
+        />
+      )}
+      {cancelando && (
+        <ModalAutorizacao
+          titulo={cancelando.item ? `Cancelar ${cancelando.item.nome}` : `Cancelar o pedido #${cancelando.comanda.numero}`}
+          descricao={
+            cancelando.item
+              ? `${descreverItem(cancelando.item)} — já foi enviado à cozinha.`
+              : `${cancelando.comanda.itens.map((i) => `${i.qtd}x ${descreverItem(i)}`).join(", ")}`
+          }
+          maxQtd={cancelando.item?.qtd ?? 0}
+          sugestoes={["Cliente desistiu", "Lançado errado", "Demorou demais", "Produto com problema"]}
+          rotuloBotao={cancelando.item ? "Cancelar item" : "Cancelar pedido"}
+          onFechar={() => setCancelando(null)}
+          onConfirmar={({ motivo, pin, qtd }) => {
+            const { comanda, item } = cancelando;
+            if (item) {
+              const itemId = item.id ?? `${comanda.id}:${comanda.itens.indexOf(item)}`;
+              cancelarItem(mesa.id, comanda.id, itemId, qtd, { motivo, pin });
+              aviso(`${qtd}x ${item.nome} cancelado.`, { tipo: "info" });
+            } else {
+              cancelarComanda(mesa.id, comanda.id, { motivo, pin });
+              aviso(`Pedido #${comanda.numero} cancelado.`, { tipo: "info" });
+            }
+            setCancelando(null);
+          }}
+        />
+      )}
       {transferindo && (
         <ModalTransferir mesa={mesa} mesas={mesas} onEscolher={transferirPara} onFechar={() => setTransferindo(false)} />
       )}
       {itemObs && (
         <ModalObservacao
-          key={`${itemObs.produtoId}|${itemObs.obs}`}
+          key={chaveItem(itemObs)}
           item={itemObs}
           onFechar={() => setItemObs(null)}
           onSalvar={(texto, qtd) => {
-            observacaoItem(mesa.id, itemObs.produtoId, itemObs.obs ?? "", texto, qtd);
+            observacaoItem(mesa.id, itemObs.produtoId, itemObs.obs ?? "", texto, qtd, itemObs.opcoesChave ?? "");
             setItemObs(null);
           }}
         />
@@ -280,9 +349,24 @@ export default function Mesa({ mesaId, navegar }) {
                   </span>
                   {statusComanda[c.status]}
                 </div>
-                <p className="text-sm text-zinc-300">
-                  {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
-                </p>
+                <ul className="text-sm text-zinc-300 space-y-0.5">
+                  {c.itens.map((i, idx) => (
+                    <li key={i.id ?? idx} className="flex items-start justify-between gap-2">
+                      <span>
+                        {i.qtd}x {descreverItem(i)}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setCancelando({ comanda: c, item: i })}
+                        aria-label={`Cancelar ${i.nome}`}
+                        title="Cancelar este item"
+                        className="shrink-0 w-7 h-7 -my-1 rounded-lg text-zinc-500 hover:text-red-400 hover:bg-zinc-800"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
                 {c.observacao && <p className="text-xs text-yellow-300 mt-1">Obs: {c.observacao}</p>}
                 {c.status === "pronto" && (
                   <Botao
@@ -293,20 +377,9 @@ export default function Mesa({ mesaId, navegar }) {
                     Marcar como servido
                   </Botao>
                 )}
-                {c.status === "preparo" && (
-                  <Botao
-                    variante="fantasma"
-                    className="mt-1 px-2 py-1 text-xs"
-                    onClick={() => {
-                      if (window.confirm(`Cancelar o pedido #${c.numero} da mesa ${mesa.numero}?`)) {
-                        cancelarComanda(mesa.id, c.id);
-                        aviso(`Pedido #${c.numero} cancelado.`, { tipo: "info" });
-                      }
-                    }}
-                  >
-                    Cancelar pedido
-                  </Botao>
-                )}
+                <Botao variante="fantasma" className="mt-1 px-2 py-1 text-xs" onClick={() => setCancelando({ comanda: c })}>
+                  Cancelar pedido inteiro
+                </Botao>
               </li>
             ))}
           </ul>
@@ -336,6 +409,7 @@ export default function Mesa({ mesaId, navegar }) {
               <>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium truncate">{item.nome}</p>
+                  {item.opcoes?.length > 0 && <p className="text-xs text-zinc-400 truncate">{descreverOpcoes(item.opcoes)}</p>}
                   {item.obs && <p className="text-xs text-yellow-300 truncate">📝 {item.obs}</p>}
                   <p className="text-sm text-orange-400">{moeda(item.preco * item.qtd)}</p>
                 </div>
@@ -353,7 +427,7 @@ export default function Mesa({ mesaId, navegar }) {
                     variante="perigo"
                     className="w-9 h-9 text-lg"
                     aria-label={`Remover um ${item.nome}`}
-                    onClick={() => removerItem(mesa.id, item.produtoId, item.obs ?? "")}
+                    onClick={() => removerItem(mesa.id, item.produtoId, item.obs ?? "", item.opcoesChave ?? "")}
                   >
                     −
                   </Botao>
@@ -363,7 +437,16 @@ export default function Mesa({ mesaId, navegar }) {
                     className="w-9 h-9 text-lg"
                     aria-label={`Adicionar um ${item.nome}`}
                     onClick={() =>
-                      adicionarItem(mesa.id, { id: item.produtoId, nome: item.nome, preco: item.preco }, item.obs ?? "")
+                      adicionarItem(
+                        mesa.id,
+                        {
+                          id: item.produtoId,
+                          nome: item.nome,
+                          preco: item.preco - (item.opcoes ?? []).reduce((a, o) => a + Number(o.preco), 0),
+                        },
+                        item.obs ?? "",
+                        item.opcoes ?? []
+                      )
                     }
                   >
                     +
@@ -428,10 +511,17 @@ export default function Mesa({ mesaId, navegar }) {
                 <button
                   type="button"
                   key={p.id}
-                  onClick={() => adicionarItem(mesa.id, p)}
-                  className="relative bg-zinc-900 border border-zinc-800 hover:border-orange-500/60 active:scale-[0.98] transition-all py-3 px-4 rounded-xl flex justify-between items-center gap-2 text-sm text-left"
+                  disabled={p.disponivel === false}
+                  onClick={() => (p.grupos?.length ? setProdutoOpcoes(p) : adicionarItem(mesa.id, p))}
+                  className="relative bg-zinc-900 border border-zinc-800 hover:border-orange-500/60 active:scale-[0.98] transition-all py-3 px-4 rounded-xl flex justify-between items-center gap-2 text-sm text-left min-h-12 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:border-zinc-800"
                 >
-                  <span className="font-medium">{p.nome}</span>
+                  <span className="font-medium">
+                    <span className={p.disponivel === false ? "line-through" : ""}>{p.nome}</span>
+                    {p.disponivel === false && <span className="block text-xs text-red-400 font-semibold">Esgotado</span>}
+                    {p.disponivel !== false && p.grupos?.length > 0 && (
+                      <span className="block text-[11px] text-zinc-500">escolher opções ›</span>
+                    )}
+                  </span>
                   <span className="text-orange-400 font-semibold whitespace-nowrap">{moeda(p.preco)}</span>
                   {qtdNoRascunho[p.id] > 0 && (
                     <span className="absolute -top-2 -left-2 bg-orange-500 text-black text-xs font-bold rounded-full min-w-6 h-6 px-1.5 flex items-center justify-center shadow">
@@ -454,7 +544,7 @@ export default function Mesa({ mesaId, navegar }) {
               className="w-full py-4 text-base flex items-center justify-between px-5 shadow-lg shadow-orange-500/20"
               onClick={() => {
                 enviarCozinha(mesa.id);
-                aviso(`Pedido da mesa ${mesa.numero} enviado à cozinha 👨‍🍳`);
+                aviso(`Pedido de ${rotuloMesa(mesa)} enviado à cozinha 👨‍🍳`);
                 window.scrollTo({ top: 0, behavior: "smooth" });
               }}
             >

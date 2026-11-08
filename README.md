@@ -70,6 +70,10 @@ Só entra quem está na tabela `super_admins`. O cadastro público do Supabase A
 - Observação por item (ex.: 1 dos 3 hambúrgueres "sem cebola") e observação geral do pedido
 - Cancelamento de pedido enquanto ainda está em preparo
 - Trocar o cliente de mesa ou juntar duas mesas numa conta só
+- **Variações e adicionais** (ex.: ponto da carne obrigatório, até 3 adicionais com preço) escolhidos ao lançar
+- **Pedidos de balcão e retirada**, sem mesa, com nome do cliente e senha do dia (o caixa também lança)
+- Produto **esgotado** aparece riscado e não pode ser lançado
+- Cancelar um item ou pedido já enviado à cozinha exige **motivo e PIN de um administrador** (vai para a auditoria)
 - Aviso com som, vibração e notificação do celular quando o pedido **dele** fica pronto
 
 **Cozinha**
@@ -77,10 +81,13 @@ Só entra quem está na tabela `super_admins`. O cadastro público do Supabase A
 - Destaque em vermelho para pedidos com mais de 20 minutos
 - Observações de cada item em destaque
 - Marcar como pronto / desfazer; aviso de pedido novo
+- Variações e adicionais de cada item em destaque
+- Painel **Esgotados** para marcar o que acabou
 
 **Caixa**
 - Contas abertas e valor total em aberto
-- Taxa de serviço de 10% (opcional)
+- Taxa de serviço configurável por restaurante (pode ser removida na conta)
+- **Desconto** em R$ ou %, com motivo e PIN de um administrador (fica na venda e na auditoria)
 - Divisão da conta em partes iguais **ou por itens** (cada um paga o que consumiu; o que é "da mesa" é dividido entre todos)
 - Pagamento em várias formas na mesma conta (ex.: R$ 20 dinheiro + R$ 5 débito + R$ 5 crédito), troco só do dinheiro
 - Histórico do caixa aberto e fechamento de caixa (as vendas vão para os relatórios)
@@ -89,7 +96,8 @@ Só entra quem está na tabela `super_admins`. O cadastro público do Supabase A
 - Painel com a visão geral e a **quantidade de mesas** do restaurante
 - **Relatórios** por período: faturamento por dia/hora, formas de pagamento, produtos mais vendidos,
   vendas por garçom, caixas fechados e planilha CSV
-- **Cardápio** editável: criar, editar preço, mover e remover produtos e categorias
+- **Cardápio** editável: criar, editar preço, mover e remover produtos e categorias, marcar esgotado
+  e configurar variações/adicionais de cada produto
 - **Equipe**: cadastrar funcionários e definir a função de cada um
 
 **Aplicativo no celular**
@@ -173,6 +181,8 @@ O tempo real usa um canal por restaurante, com nome secreto entregue só depois 
 a mensagem não leva dados (só avisa "algo mudou").
 
 **Testes** (podem ser rodados em qualquer banco; tudo é desfeito no final):
+[`supabase/testes/operacao.sql`](supabase/testes/operacao.sql) testa a operação (esgotado, opções, balcão, desconto,
+cancelamento e o bloqueio após 5 PINs de admin errados);
 [`supabase/testes/portal-admin.sql`](supabase/testes/portal-admin.sql) testa o portal (permissões, 2FA obrigatório,
 criar/suspender restaurante, reset de PIN, suporte e auditoria).
 
@@ -195,6 +205,7 @@ na ordem, pelo mesmo SQL Editor (elas não apagam dados):
 - [`supabase/migracao-02-cardapio-mesas-relatorios.sql`](supabase/migracao-02-cardapio-mesas-relatorios.sql): observação por item, transferir mesas, quantidade de mesas, cardápio editável e relatórios.
 - [`supabase/migracao-03-multiempresa.sql`](supabase/migracao-03-multiempresa.sql): multiempresa. Os dados existentes viram o primeiro restaurante. Faça um backup antes.
 - [`supabase/migracao-04-portal-admin.sql`](supabase/migracao-04-portal-admin.sql): portal do dono do sistema e log de auditoria.
+- [`supabase/migracao-05-operacao.sql`](supabase/migracao-05-operacao.sql): esgotado, variações/adicionais, balcão/retirada, desconto e cancelamento com PIN de admin.
 
 3. Em **Project Settings → API** copie a **Project URL** e a chave **publishable** (ou *anon public*).
 4. Para rodar no seu computador: copie `.env.example` para `.env.local`, preencha os dois valores e rode `npm run dev`.

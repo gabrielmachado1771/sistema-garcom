@@ -27,14 +27,15 @@ function Numero({ rotulo, valor, detalhe }) {
 
 function baixarCsv(vendas, periodo) {
   const linhas = [
-    ["Data", "Mesa", "Garçom", "Caixa", "Subtotal", "Taxa", "Total", "Pagamento", "Itens"],
+    ["Data", "Pedido", "Garçom", "Caixa", "Subtotal", "Taxa", "Desconto", "Total", "Pagamento", "Itens"],
     ...vendas.map((v) => [
       new Date(v.data).toLocaleString("pt-BR"),
-      v.mesa,
+      v.rotulo ?? `Mesa ${v.mesa}`,
       v.atendente ?? "",
       v.operador ?? "",
       v.subtotal.toFixed(2).replace(".", ","),
       v.taxa.toFixed(2).replace(".", ","),
+      Number(v.desconto ?? 0).toFixed(2).replace(".", ","),
       v.total.toFixed(2).replace(".", ","),
       descreverPagamento(v),
       (v.itens ?? []).map((i) => `${i.qtd}x ${i.nome}`).join(" | "),

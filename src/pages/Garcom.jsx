@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useRestaurante } from "../store/contexto";
 import AtivarAvisos from "../components/AtivarAvisos";
-import { comandasNaCozinha, mesaOcupada, statusMesa, totalMesa } from "../store/regras";
+import { comandasNaCozinha, descreverItem, mesaOcupada, mesasDoSalao, statusMesa, totalMesa } from "../store/regras";
+import PedidosBalcao from "../components/PedidosBalcao";
 import { moeda, plural } from "../utils/format";
 import { Botao, Cabecalho, Cartao, Etiqueta, Pagina } from "../components/ui";
 
@@ -22,10 +23,11 @@ const estilos = {
 };
 
 export default function Garcom({ navegar }) {
-  const { mesas, marcarEntregue, usuario } = useRestaurante();
+  const { mesas: todas, marcarEntregue, usuario } = useRestaurante();
+  const mesas = mesasDoSalao(todas);
   const [filtro, setFiltro] = useState("todas");
   const ocupadas = mesas.filter(mesaOcupada).length;
-  const prontos = comandasNaCozinha(mesas, "pronto");
+  const prontos = comandasNaCozinha(todas, "pronto");
   const ehMinha = (m) => m.atendente?.id === usuario.id;
   const minhas = mesas.filter(ehMinha).length;
   const filtros = [
@@ -50,9 +52,9 @@ export default function Garcom({ navegar }) {
           {prontos.map((c) => (
             <div key={c.id} className="flex items-center justify-between gap-3">
               <p className="text-sm min-w-0 truncate">
-                <span className="font-bold">Mesa {c.mesaNumero}</span>
+                <span className="font-bold">{c.rotulo}</span>
                 <span className="text-zinc-400">
-                  {" "}· {c.itens.map((i) => `${i.qtd}x ${i.nome}${i.obs ? ` (${i.obs})` : ""}`).join(", ")}
+                  {" "}· {c.itens.map((i) => `${i.qtd}x ${descreverItem(i)}`).join(", ")}
                 </span>
               </p>
               <Botao
@@ -67,6 +69,8 @@ export default function Garcom({ navegar }) {
           ))}
         </Cartao>
       )}
+
+      <PedidosBalcao onAbrir={(numero) => navegar("garcom", numero)} />
 
       <div className="flex gap-2">
         {filtros.map((f) => (

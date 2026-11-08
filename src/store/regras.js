@@ -93,10 +93,12 @@ export function resumoPagamento(pagamentos, total) {
   };
 }
 
-function novaMesa(numero) {
+function novaMesa(numero, extra = {}) {
   return {
     id: numero,
     numero,
+    tipo: "mesa", // "mesa" | "balcao" | "retirada"
+    ...extra,
     abertaEm: null,
     rascunho: [], // itens ainda não enviados à cozinha
     observacao: "",
@@ -176,9 +178,54 @@ export function juntarPagamentos(pagamentos) {
   })).filter((p) => p.valor > 0);
 }
 
-/** Chave de uma linha do pedido: o mesmo produto com observações diferentes vira linhas separadas. */
+/** Chave de uma linha do pedido: o mesmo produto com observação ou opções diferentes vira linhas separadas. */
 export function chaveItem(item) {
-  return `${item.produtoId}|${item.obs ?? ""}`;
+  return `${item.produtoId}|${item.obs ?? ""}|${item.opcoesChave ?? chaveOpcoes(item.opcoes)}`;
+}
+
+/** "3,7": ids das opções escolhidas, em ordem (igual ao banco). */
+export function chaveOpcoes(opcoes) {
+  return (opcoes ?? [])
+    .map((o) => o.id)
+    .sort((a, b) => a - b)
+    .join(",");
+}
+
+/** "Ao ponto, + Bacon" — para mostrar as escolhas de um item. */
+export function descreverOpcoes(opcoes) {
+  return (opcoes ?? []).map((o) => (o.preco > 0 ? `+ ${o.nome}` : o.nome)).join(", ");
+}
+
+/** Nome + opções + observação numa linha só (cozinha, listas). */
+export function descreverItem(item) {
+  const extras = [descreverOpcoes(item.opcoes), item.obs].filter(Boolean).join(" · ");
+  return extras ? `${item.nome} (${extras})` : item.nome;
+}
+
+/** Mesas de verdade (sem os pedidos de balcão/retirada). */
+export function mesasDoSalao(mesas) {
+  return mesas.filter((m) => (m.tipo ?? "mesa") === "mesa");
+}
+
+export function pedidosBalcao(mesas) {
+  return mesas.filter((m) => m.tipo && m.tipo !== "mesa");
+}
+
+/** "Mesa 3", "Balcão #12 · João", "Retirada #4". */
+export function rotuloMesa(m) {
+  if (!m) return "";
+  if ((m.tipo ?? "mesa") === "mesa") return `Mesa ${m.numero}`;
+  return `${m.tipo === "balcao" ? "Balcão" : "Retirada"} #${m.senha}${m.cliente ? ` · ${m.cliente}` : ""}`;
+}
+
+/** Confere se as opções escolhidas respeitam os grupos do produto (obrigatório e máximo). */
+export function validarOpcoes(produto, opcoes) {
+  for (const g of produto.grupos ?? []) {
+    const n = (opcoes ?? []).filter((o) => g.opcoes.some((x) => x.id === o.id)).length;
+    if (g.obrigatorio && n === 0) return `Escolha ${g.nome.toLowerCase()}.`;
+    if (n > g.maximo) return `${g.nome}: no máximo ${g.maximo}.`;
+  }
+  return "";
 }
 
 export function somaItens(itens) {
@@ -224,7 +271,7 @@ export function comandasNaCozinha(mesas, status) {
     .flatMap((m) =>
       m.comandas
         .filter((c) => c.status === status)
-        .map((c) => ({ ...c, mesaId: m.id, mesaNumero: m.numero }))
+        .map((c) => ({ ...c, mesaId: m.id, mesaNumero: m.numero, rotulo: rotuloMesa(m) }))
     )
     .sort((a, b) => a.enviadaEm - b.enviadaEm);
 }
@@ -266,7 +313,7 @@ function repartir(total, pesos) {
  * A taxa de serviço é repartida na proporção do consumo de cada um.
  * A soma das partes é sempre exatamente o total da conta.
  */
-export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa, taxaServico = TAXA_SERVICO) {
+export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa, taxaServico = TAXA_SERVICO, desconto = 0) {
   const emCentavos = (v) => Math.round(v * 100);
   const proprios = Array(pessoas).fill(0);
   let compartilhado = 0;
@@ -280,13 +327,17 @@ export function dividirPorItens(unidades, atribuicao, pessoas, comTaxa, taxaServ
   const subtotalGeral = subtotais.reduce((a, b) => a + b, 0);
   const taxaGeral = comTaxa ? Math.round(subtotalGeral * taxaServico) : 0;
   const taxas = repartir(taxaGeral, subtotais);
+  // Desconto repartido na proporção do que cada um deve.
+  const brutos = subtotais.map((sub, i) => sub + taxas[i]);
+  const descontos = repartir(Math.min(Math.round(desconto * 100), subtotalGeral + taxaGeral), brutos);
   return subtotais.map((sub, i) => ({
     pessoa: i,
     proprio: proprios[i] / 100,
     compartilhado: partesCompartilhadas[i] / 100,
     subtotal: sub / 100,
     taxa: taxas[i] / 100,
-    total: (sub + taxas[i]) / 100,
+    desconto: descontos[i] / 100,
+    total: (brutos[i] - descontos[i]) / 100,
   }));
 }
 
@@ -380,13 +431,14 @@ export function reducer(state, action) {
       return atualizarMesa(state, action.mesaId, (m) => {
         const { produto } = action;
         const obs = action.obs ?? "";
-        const mesmaLinha = (i) => i.produtoId === produto.id && (i.obs ?? "") === obs;
+        const opcoes = action.opcoes ?? [];
+        const opcoesChave = chaveOpcoes(opcoes);
+        const preco = centavos(produto.preco + opcoes.reduce((a, o) => a + Number(o.preco || 0), 0));
+        const novo = { produtoId: produto.id, nome: produto.nome, preco, qtd: 1, obs, opcoes, opcoesChave };
+        const mesmaLinha = (i) => chaveItem(i) === chaveItem(novo);
         const rascunho = m.rascunho.some(mesmaLinha)
           ? m.rascunho.map((i) => (mesmaLinha(i) ? { ...i, qtd: i.qtd + 1 } : i))
-          : [
-              ...m.rascunho,
-              { produtoId: produto.id, nome: produto.nome, preco: produto.preco, qtd: 1, obs },
-            ];
+          : [...m.rascunho, novo];
         return {
           ...m,
           rascunho,
@@ -400,7 +452,11 @@ export function reducer(state, action) {
         ...m,
         rascunho: m.rascunho
           .map((i) =>
-            i.produtoId === action.produtoId && (i.obs ?? "") === (action.obs ?? "") ? { ...i, qtd: i.qtd - 1 } : i
+            i.produtoId === action.produtoId &&
+            (i.obs ?? "") === (action.obs ?? "") &&
+            (i.opcoesChave ?? chaveOpcoes(i.opcoes)) === (action.opcoesChave ?? "")
+              ? { ...i, qtd: i.qtd - 1 }
+              : i
           )
           .filter((i) => i.qtd > 0),
       }));
@@ -409,13 +465,18 @@ export function reducer(state, action) {
       // Move `qtd` unidades de uma linha para outra com a nova observação (ex.: 1 dos 3 hambúrgueres "sem cebola").
       return atualizarMesa(state, action.mesaId, (m) => {
         const obsNova = action.obs.trim().slice(0, 100);
-        const origem = m.rascunho.find((i) => i.produtoId === action.produtoId && (i.obs ?? "") === action.obsAntiga);
+        const origem = m.rascunho.find(
+          (i) =>
+            i.produtoId === action.produtoId &&
+            (i.obs ?? "") === action.obsAntiga &&
+            (i.opcoesChave ?? chaveOpcoes(i.opcoes)) === (action.opcoesChave ?? "")
+        );
         if (!origem || obsNova === action.obsAntiga) return m;
         const qtd = Math.min(Math.max(1, action.qtd), origem.qtd);
         let rascunho = m.rascunho
           .map((i) => (i === origem ? { ...i, qtd: i.qtd - qtd } : i))
           .filter((i) => i.qtd > 0);
-        const destino = rascunho.find((i) => i.produtoId === action.produtoId && (i.obs ?? "") === obsNova);
+        const destino = rascunho.find((i) => chaveItem(i) === chaveItem({ ...origem, obs: obsNova }));
         rascunho = destino
           ? rascunho.map((i) => (i === destino ? { ...i, qtd: i.qtd + qtd } : i))
           : [...rascunho, { ...origem, qtd, obs: obsNova }];
@@ -443,7 +504,7 @@ export function reducer(state, action) {
         const comanda = {
           id: `${m.id}-${Date.now()}`,
           numero: m.comandas.length + 1,
-          itens: m.rascunho,
+          itens: m.rascunho.map((i, idx) => ({ ...i, id: `${m.id}-${Date.now()}-${idx}` })),
           observacao: m.observacao.trim(),
           enviadaEm: Date.now(),
           prontaEm: null,
@@ -471,11 +532,9 @@ export function reducer(state, action) {
     }
 
     case "CANCELAR_COMANDA":
-      // Só é possível cancelar enquanto ainda está em preparo.
+      // Autorização (motivo + PIN de admin) é conferida antes, na tela, e de novo no banco.
       return atualizarMesa(state, action.mesaId, (m) => {
-        const comandas = m.comandas.filter(
-          (c) => !(c.id === action.comandaId && c.status === "preparo")
-        );
+        const comandas = m.comandas.filter((c) => c.id !== action.comandaId);
         return {
           ...m,
           comandas,
@@ -484,13 +543,75 @@ export function reducer(state, action) {
         };
       });
 
+    case "CANCELAR_ITEM":
+      return atualizarMesa(state, action.mesaId, (m) => {
+        const comandas = m.comandas
+          .map((c) =>
+            c.id !== action.comandaId
+              ? c
+              : {
+                  ...c,
+                  itens: c.itens
+                    .map((i, idx) => ((i.id ?? `${c.id}:${idx}`) === action.itemId ? { ...i, qtd: i.qtd - action.qtd } : i))
+                    .filter((i) => i.qtd > 0),
+                }
+          )
+          .filter((c) => c.itens.length > 0);
+        const vazia = !comandas.length && !m.rascunho.length;
+        return { ...m, comandas, abertaEm: vazia ? null : m.abertaEm, atendente: vazia ? null : m.atendente };
+      });
+
+    case "ABRIR_BALCAO": {
+      const numero = Math.max(1000, ...state.mesas.map((m) => m.numero)) + 1;
+      const hoje = new Date().setHours(0, 0, 0, 0);
+      const senha = (state.contagemBalcao?.dia === hoje ? state.contagemBalcao.n : 0) + 1;
+      const pedido = {
+        ...novaMesa(numero, { tipo: action.tipo, cliente: action.cliente?.trim() || null, senha }),
+        abertaEm: Date.now(),
+        atendente: action.atendente ?? null,
+      };
+      return { ...state, mesas: [...state.mesas, pedido], contagemBalcao: { dia: hoje, n: senha } };
+    }
+
+    case "CANCELAR_BALCAO": {
+      const pedido = state.mesas.find((m) => m.id === action.mesaId);
+      if (!pedido || (pedido.tipo ?? "mesa") === "mesa" || pedido.comandas.length) return state;
+      return { ...state, mesas: state.mesas.filter((m) => m !== pedido) };
+    }
+
+    case "MARCAR_ESGOTADO":
+      return {
+        ...state,
+        cardapio: state.cardapio.map((c) => ({
+          ...c,
+          produtos: c.produtos.map((p) => (p.id === action.produtoId ? { ...p, disponivel: !action.esgotado } : p)),
+        })),
+      };
+
+    case "SALVAR_OPCOES_PRODUTO": {
+      let id = Date.now();
+      const grupos = action.grupos.map((g) => ({
+        ...g,
+        id: id++,
+        opcoes: g.opcoes.map((o) => ({ ...o, id: id++, preco: centavos(Number(o.preco) || 0) })),
+      }));
+      return {
+        ...state,
+        cardapio: state.cardapio.map((c) => ({
+          ...c,
+          produtos: c.produtos.map((p) => (p.id === action.produtoId ? { ...p, grupos } : p)),
+        })),
+      };
+    }
+
     case "FINALIZAR_CONTA": {
       const mesa = state.mesas.find((m) => m.id === action.mesaId);
       if (!mesa || mesa.comandas.length === 0) return state;
       const { comTaxa, pessoas } = action;
       const subtotal = totalMesa(mesa);
       const taxa = centavos(comTaxa ? subtotal * (state.empresa?.taxaServico ?? TAXA_SERVICO) : 0);
-      const total = centavos(subtotal + taxa);
+      const desconto = centavos(Math.min(Math.max(0, action.desconto ?? 0), subtotal + taxa));
+      const total = centavos(subtotal + taxa - desconto);
       const pagamentos = juntarPagamentos(action.pagamentos ?? []);
       const resumo = resumoPagamento(pagamentos, total);
       if (!resumo.valido) return state;
@@ -509,12 +630,18 @@ export function reducer(state, action) {
         abertaEm: mesa.abertaEm,
         atendente: mesa.atendente?.nome ?? null,
         operador: action.operador ?? null,
+        rotulo: rotuloMesa(mesa),
+        desconto,
+        descontoMotivo: desconto ? action.descontoMotivo : null,
+        descontoPor: desconto ? action.descontoPor : null,
         data: Date.now(),
       };
-      return {
-        ...atualizarMesa(state, mesa.id, (m) => novaMesa(m.numero)),
-        historico: [venda, ...state.historico],
-      };
+      // Mesa volta a ficar livre; pedido de balcão/retirada sai da tela.
+      const mesas =
+        (mesa.tipo ?? "mesa") === "mesa"
+          ? state.mesas.map((m) => (m.id === mesa.id ? novaMesa(m.numero) : m))
+          : state.mesas.filter((m) => m.id !== mesa.id);
+      return { ...state, mesas, historico: [venda, ...state.historico] };
     }
 
     case "CRIAR_FUNCIONARIO": {
@@ -605,9 +732,10 @@ export function reducer(state, action) {
     case "DEFINIR_MESAS": {
       const qtd = Math.trunc(action.quantidade);
       if (!(qtd >= 1 && qtd <= MAX_MESAS)) return state;
-      if (state.mesas.slice(qtd).some(mesaOcupada)) return state; // não some com mesa ocupada
-      const mesas = Array.from({ length: qtd }, (_, i) => state.mesas[i] ?? novaMesa(i + 1));
-      return { ...state, mesas };
+      const salao = mesasDoSalao(state.mesas);
+      if (salao.slice(qtd).some(mesaOcupada)) return state; // não some com mesa ocupada
+      const mesas = Array.from({ length: qtd }, (_, i) => salao[i] ?? novaMesa(i + 1));
+      return { ...state, mesas: [...mesas, ...pedidosBalcao(state.mesas)] };
     }
 
     case "SALVAR_CATEGORIA": {

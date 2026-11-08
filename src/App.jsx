@@ -21,7 +21,7 @@ import Cardapio from "./pages/Cardapio";
 // O portal do dono do sistema só é baixado quando alguém abre #/admin.
 const AdminApp = lazy(() => import("./admin/AdminApp"));
 
-function Pagina({ area, param, navegar }) {
+function Pagina({ area, param, extra, navegar }) {
   const mesaId = Number(param) || null;
   switch (area) {
     case "garcom":
@@ -30,6 +30,10 @@ function Pagina({ area, param, navegar }) {
       return <Cozinha navegar={navegar} />;
     case "caixa":
       if (param === "historico") return <Historico navegar={navegar} />;
+      // Pedido de balcão/retirada lançado pelo próprio caixa.
+      if (param === "pedido" && Number(extra)) {
+        return <Mesa key={extra} mesaId={Number(extra)} navegar={navegar} voltarPara="caixa" />;
+      }
       return mesaId ? <Conta key={mesaId} mesaId={mesaId} navegar={navegar} /> : <Caixa navegar={navegar} />;
     case "equipe":
       return <Equipe navegar={navegar} />;
@@ -143,7 +147,7 @@ function Rotas() {
   return (
     <Layout areaAtual={area} navegar={navegar}>
       <Alertas area={area} />
-      <Pagina key={area} area={area} param={param} navegar={navegar} />
+      <Pagina key={area} area={area} param={param} extra={rota[2]} navegar={navegar} />
     </Layout>
   );
 }

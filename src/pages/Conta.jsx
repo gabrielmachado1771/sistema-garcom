@@ -8,10 +8,13 @@ import {
   itensConsumidos,
   juntarPagamentos,
   resumoPagamento,
+  rotuloMesa,
   totalMesa,
   unidadesDaConta,
 } from "../store/regras";
-import { moeda, plural } from "../utils/format";
+import ModalAutorizacao from "../components/ModalAutorizacao";
+import { classeInput } from "../utils/estilos";
+import { moeda, parseValor, plural } from "../utils/format";
 import { Botao, BotaoVoltar, Cabecalho, Cartao, ListaItens, Pagina, TituloSecao, Vazio } from "../components/ui";
 import PagamentoPessoa from "../components/conta/PagamentoPessoa";
 import { partesDoPagamento, situacao } from "../components/conta/calculos";
@@ -37,6 +40,9 @@ export default function Conta({ mesaId, navegar }) {
   const [pagos, setPagos] = useState({}); // pessoa -> { forma, recebido, texto }
   const [aberto, setAberto] = useState(null); // pessoa com o cartão aberto (null = a próxima que falta)
   const [confirmando, setConfirmando] = useState(false);
+  const [desconto, setDesconto] = useState(null); // { tipo: "valor" | "pct", numero, motivo, pin, autorizadoPor }
+  const [dandoDesconto, setDandoDesconto] = useState(false);
+  const [formDesconto, setFormDesconto] = useState({ tipo: "valor", texto: "" });
 
   const mesa = mesas.find((m) => m.id === mesaId);
   const voltar = () => navegar("caixa");
@@ -55,11 +61,16 @@ export default function Conta({ mesaId, navegar }) {
   const itens = itensConsumidos(mesa);
   const subtotal = totalMesa(mesa);
   const taxa = centavos(comTaxa ? subtotal * taxaServico : 0);
-  const total = centavos(subtotal + taxa);
+  const bruto = centavos(subtotal + taxa);
+  // Desconto em % é recalculado se a taxa mudar; nunca passa do valor da conta.
+  const valorDesconto = !desconto
+    ? 0
+    : centavos(Math.min(bruto, desconto.tipo === "pct" ? (bruto * desconto.numero) / 100 : desconto.numero));
+  const total = centavos(bruto - valorDesconto);
   const unidades = unidadesDaConta(mesa);
   const varias = modo !== "uma";
   const partes = varias
-    ? dividirPorItens(unidades, modo === "itens" ? atribuicao : {}, pessoas, comTaxa, taxaServico)
+    ? dividirPorItens(unidades, modo === "itens" ? atribuicao : {}, pessoas, comTaxa, taxaServico, valorDesconto)
     : [{ pessoa: 0, total, proprio: 0, compartilhado: 0, taxa: 0 }];
   const nomes = Array.from({ length: Math.max(pessoas, 1) }, (_, i) => `Pessoa ${i + 1}`);
 
@@ -132,7 +143,15 @@ export default function Conta({ mesaId, navegar }) {
       setConfirmando(true);
       return;
     }
-    finalizarConta(mesa.id, { comTaxa, pessoas: varias ? pessoas : 1, pagamentos });
+    finalizarConta(mesa.id, {
+      comTaxa,
+      pessoas: varias ? pessoas : 1,
+      pagamentos,
+      desconto: valorDesconto,
+      descontoMotivo: desconto?.motivo ?? null,
+      descontoPor: desconto?.autorizadoPor ?? null,
+      pin: desconto?.pin ?? null,
+    });
     const formas = descreverPagamento({ pagamentos });
     aviso(
       resumo.troco > 0
@@ -146,7 +165,7 @@ export default function Conta({ mesaId, navegar }) {
 
   return (
     <Pagina className="pb-44">
-      <Cabecalho titulo={`Conta — Mesa ${mesa.numero}`} subtitulo="Conferência e pagamento">
+      <Cabecalho titulo={`Conta — ${rotuloMesa(mesa)}`} subtitulo="Conferência e pagamento">
         <BotaoVoltar onClick={voltar} />
       </Cabecalho>
 
@@ -198,11 +217,89 @@ export default function Conta({ mesaId, navegar }) {
           </span>
           <span>{moeda(taxa)}</span>
         </label>
+        {desconto ? (
+          <div className="mt-2 flex justify-between items-start gap-3 text-sm text-yellow-300">
+            <span className="min-w-0">
+              Desconto{desconto.tipo === "pct" ? ` (${String(desconto.numero).replace(".", ",")}%)` : ""}
+              <span className="block text-xs text-zinc-500 truncate">
+                {desconto.motivo} · autorizado por {desconto.autorizadoPor}
+              </span>
+              <button
+                type="button"
+                className="text-xs text-zinc-400 underline hover:text-white"
+                onClick={() => {
+                  valoresMudaram();
+                  setDesconto(null);
+                }}
+              >
+                tirar desconto
+              </button>
+            </span>
+            <span className="tabular-nums whitespace-nowrap">− {moeda(valorDesconto)}</span>
+          </div>
+        ) : (
+          <button type="button" onClick={() => setDandoDesconto(true)} className="mt-2 text-sm text-orange-400 hover:underline">
+            + Dar desconto
+          </button>
+        )}
         <div className="flex justify-between items-baseline pt-3 mt-2 border-t border-zinc-700">
           <span className="text-lg font-bold">Total</span>
           <span className="text-3xl font-bold text-orange-500 tabular-nums">{moeda(total)}</span>
         </div>
       </Cartao>
+
+      {dandoDesconto && (
+        <ModalAutorizacao
+          titulo="Dar desconto"
+          variante="primario"
+          rotuloBotao="Aplicar desconto"
+          sugestoes={["Cliente fiel", "Erro no pedido", "Demora no atendimento", "Cortesia da casa"]}
+          validar={() => {
+            const n = parseValor(formDesconto.texto);
+            if (!(n > 0)) return "Informe o valor do desconto.";
+            if (formDesconto.tipo === "pct" && n > 100) return "O desconto não pode passar de 100%.";
+            if (formDesconto.tipo === "valor" && n > bruto) return "O desconto não pode ser maior que a conta.";
+            return "";
+          }}
+          extra={
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-1 bg-zinc-800/60 p-1 rounded-xl" role="radiogroup" aria-label="Tipo de desconto">
+                {[
+                  ["valor", "Em R$"],
+                  ["pct", "Em %"],
+                ].map(([id, rotulo]) => (
+                  <button
+                    type="button"
+                    key={id}
+                    role="radio"
+                    aria-checked={formDesconto.tipo === id}
+                    onClick={() => setFormDesconto((f) => ({ ...f, tipo: id }))}
+                    className={`py-2 rounded-lg text-sm font-semibold ${formDesconto.tipo === id ? "bg-orange-500 text-black" : "text-zinc-300"}`}
+                  >
+                    {rotulo}
+                  </button>
+                ))}
+              </div>
+              <input
+                inputMode="decimal"
+                placeholder={formDesconto.tipo === "pct" ? "ex.: 10" : "ex.: 15,00"}
+                aria-label="Valor do desconto"
+                value={formDesconto.texto}
+                onChange={(e) => setFormDesconto((f) => ({ ...f, texto: e.target.value }))}
+                className={`${classeInput} text-lg`}
+              />
+              <p className="text-xs text-zinc-500">Conta sem desconto: {moeda(bruto)}</p>
+            </div>
+          }
+          onFechar={() => setDandoDesconto(false)}
+          onConfirmar={({ motivo, pin, autorizadoPor }) => {
+            valoresMudaram();
+            setDesconto({ tipo: formDesconto.tipo, numero: parseValor(formDesconto.texto), motivo, pin, autorizadoPor });
+            setDandoDesconto(false);
+            setFormDesconto({ tipo: "valor", texto: "" });
+          }}
+        />
+      )}
 
       {/* Passo 1: como vão pagar */}
       <Cartao>

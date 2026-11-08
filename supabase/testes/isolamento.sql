@@ -157,6 +157,35 @@ begin
   end if;
   raise notice 'ok: A não mexe no cardápio de B';
 
+  -- ---------- operação: esgotado, opções, cancelamento, balcão, PIN de admin ----------
+  perform marcar_esgotado(ta, pb, true);
+  if not (select disponivel from produtos where id = pb) then
+    raise exception 'FALHOU: A marcou produto de B como esgotado';
+  end if;
+  begin
+    perform salvar_opcoes_produto(ta, pb, '[]');
+    raise exception 'FALHOU: A mexeu nas opções de produto de B';
+  exception when others then
+    if sqlerrm not like '%PRODUTO_INVALIDO%' then raise exception 'FALHOU: salvar_opcoes_produto (%)', sqlerrm; end if;
+  end;
+  begin
+    perform cancelar_item(ta, (select id from comanda_itens where empresa_id = eb limit 1), 1, 'invasão');
+    raise exception 'FALHOU: A cancelou item de B';
+  exception when others then
+    if sqlerrm not like '%ITEM_INVALIDO%' then raise exception 'FALHOU: cancelar_item (%)', sqlerrm; end if;
+  end;
+  r := abrir_balcao(tb, 'balcao', 'Cliente B');
+  perform cancelar_balcao(ta, (r ->> 'criado')::int);
+  if not (select ativa from mesas where empresa_id = eb and numero = (r ->> 'criado')::int) then
+    raise exception 'FALHOU: A cancelou balcão de B';
+  end if;
+  update mesas set ativa = false where empresa_id = eb and numero = (r ->> 'criado')::int;
+  r := conferir_pin_admin((entrar('zz-teste-a', garcom_a, '1112') ->> 'token')::uuid, '2222');
+  if (r ->> 'ok')::boolean then
+    raise exception 'FALHOU: PIN do admin de B autorizou em A';
+  end if;
+  raise notice 'ok: esgotado, opções, cancelamento, balcão e PIN de admin não atravessam restaurantes';
+
   -- ---------- mesas e configuração ----------
   perform definir_mesas(ta, 1);
   select count(*) into n from mesas where empresa_id = eb and ativa;

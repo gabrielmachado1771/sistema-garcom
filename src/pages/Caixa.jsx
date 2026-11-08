@@ -1,5 +1,6 @@
 import { useRestaurante } from "../store/contexto";
-import { contarItens, itensConsumidos, totalMesa } from "../store/regras";
+import { contarItens, itensConsumidos, rotuloMesa, totalMesa } from "../store/regras";
+import PedidosBalcao from "../components/PedidosBalcao";
 import { hora, moeda, plural } from "../utils/format";
 import { Botao, Cabecalho, Cartao, Etiqueta, Pagina, Vazio } from "../components/ui";
 
@@ -11,7 +12,7 @@ export default function Caixa({ navegar }) {
 
   return (
     <Pagina>
-      <Cabecalho titulo="Caixa" subtitulo="Mesas com conta aberta">
+      <Cabecalho titulo="Caixa" subtitulo="Contas abertas">
         <Botao className="px-4 py-2 text-sm" onClick={() => navegar("caixa", "historico")}>
           Histórico
         </Botao>
@@ -28,8 +29,10 @@ export default function Caixa({ navegar }) {
         </Cartao>
       </div>
 
+      <PedidosBalcao onAbrir={(numero) => navegar("caixa", "pedido", numero)} />
+
       {comConta.length === 0 ? (
-        <Vazio icone="💰">Nenhuma mesa com conta aberta.</Vazio>
+        <Vazio icone="💰">Nenhuma conta aberta.</Vazio>
       ) : (
         comConta.map((mesa) => {
           const emPreparo = mesa.comandas.some((c) => c.status !== "entregue");
@@ -37,7 +40,7 @@ export default function Caixa({ navegar }) {
             <Cartao key={mesa.id} className="flex justify-between items-center gap-3 hover:border-zinc-700 transition">
               <div className="min-w-0">
                 <p className="font-bold text-lg flex items-center gap-2">
-                  Mesa {mesa.numero}
+                  {rotuloMesa(mesa)}
                   {emPreparo && <Etiqueta cor="amarelo">Pedido em andamento</Etiqueta>}
                 </p>
                 <p className="text-sm text-zinc-400">
