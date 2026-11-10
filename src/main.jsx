@@ -4,7 +4,9 @@ import App from './App.jsx'
 import './index.css'
 import './App.css'
 import { registrarServiceWorker } from './utils/instalar.js'
+import { aplicarTema } from './utils/tema.js'
 
+aplicarTema()
 registrarServiceWorker()
 
 // Link bonito da Vercel (/r/sobradinho) vira a rota interna (#/r/sobradinho).

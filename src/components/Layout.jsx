@@ -1,6 +1,6 @@
 import { useRestaurante } from "../store/contexto";
 import { comandasNaCozinha, FUNCOES, podeAcessar } from "../store/regras";
-import { Avatar } from "./ui";
+import { Avatar, BotaoTema } from "./ui";
 import BotaoInstalar from "./BotaoInstalar";
 
 const ABAS = [
@@ -22,7 +22,7 @@ export default function Layout({ areaAtual, navegar, children }) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white">
+    <div className="min-h-screen bg-zinc-950 text-tinta">
       {suporte && (
         <div
           role="status"
@@ -43,11 +43,12 @@ export default function Layout({ areaAtual, navegar, children }) {
           </button>
         </div>
       )}
-      <header className={`sticky ${suporte ? "top-9" : "top-0"} z-30 bg-zinc-950/85 backdrop-blur border-b border-zinc-800`}>
-        <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
-          <span className="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center shrink-0" aria-hidden>
+      <header className={`sticky ${suporte ? "top-9" : "top-0"} z-30 bg-zinc-900/90 backdrop-blur-md border-b border-zinc-800`}>
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
+          <span className="w-9 h-9 bg-gradient-to-br from-orange-400 to-orange-600 rounded-xl flex items-center justify-center shrink-0 shadow-sm shadow-orange-500/30" aria-hidden>
             🍽
           </span>
+          {empresa?.nome && <span className="hidden lg:block font-bold tracking-tight max-w-40 truncate">{empresa.nome}</span>}
 
           {abas.length > 1 ? (
             <nav className="flex-1 min-w-0 flex gap-1 overflow-x-auto [scrollbar-width:none]" aria-label="Áreas">
@@ -60,8 +61,8 @@ export default function Layout({ areaAtual, navegar, children }) {
                     key={a.area}
                     onClick={() => navegar(a.area === "painel" ? undefined : a.area)}
                     aria-current={ativa ? "page" : undefined}
-                    className={`relative shrink-0 px-3 py-1.5 rounded-lg text-sm font-semibold transition flex items-center gap-1.5 ${
-                      ativa ? "bg-zinc-800 text-orange-400" : "text-zinc-400 hover:text-white hover:bg-zinc-900"
+                    className={`relative shrink-0 min-h-10 px-3 rounded-xl text-sm font-semibold transition flex items-center gap-1.5 ${
+                      ativa ? "bg-orange-500/15 text-orange-400" : "text-zinc-400 hover:text-tinta hover:bg-zinc-800"
                     }`}
                   >
                     <span aria-hidden>{a.icone}</span>
@@ -83,6 +84,7 @@ export default function Layout({ areaAtual, navegar, children }) {
 
           <div className="flex items-center gap-2 shrink-0">
             <BotaoInstalar compacto />
+            <BotaoTema />
             {modo === "nuvem" && (
               <span
                 title={conexao === "online" ? "Conectado ao banco de dados" : "Sem conexão — tentando novamente"}
@@ -99,7 +101,7 @@ export default function Layout({ areaAtual, navegar, children }) {
             <button
               type="button"
               onClick={sair}
-              className="ml-1 px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition"
+              className="ml-1 min-h-10 px-3 rounded-xl text-sm font-semibold text-zinc-400 hover:text-tinta hover:bg-zinc-800 transition"
               title="Sair / trocar de usuário"
             >
               Sair

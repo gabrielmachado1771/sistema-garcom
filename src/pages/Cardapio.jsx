@@ -232,7 +232,7 @@ export default function Cardapio() {
                         aviso(p.disponivel !== false ? `${p.nome} esgotado.` : `${p.nome} disponível.`, { tipo: "info" });
                       }}
                       className={`shrink-0 h-8 px-2 rounded-lg text-[11px] font-semibold ${
-                        p.disponivel === false ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-white"
+                        p.disponivel === false ? "bg-red-600 text-white" : "bg-zinc-800 text-zinc-400 hover:text-tinta"
                       }`}
                     >
                       {p.disponivel === false ? "Esgotado" : "Disponível"}

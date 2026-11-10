@@ -4,7 +4,7 @@ import { AvisoContext } from "../store/contexto";
 const estilos = {
   sucesso: "bg-green-600 text-white",
   erro: "bg-red-600 text-white",
-  info: "bg-zinc-800 text-white border border-zinc-700",
+  info: "bg-zinc-800 text-tinta border border-zinc-700",
   alerta: "bg-orange-500 text-black",
 };
 

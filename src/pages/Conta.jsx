@@ -226,7 +226,7 @@ export default function Conta({ mesaId, navegar }) {
               </span>
               <button
                 type="button"
-                className="text-xs text-zinc-400 underline hover:text-white"
+                className="text-xs text-zinc-400 underline hover:text-tinta"
                 onClick={() => {
                   valoresMudaram();
                   setDesconto(null);
@@ -419,7 +419,7 @@ export default function Conta({ mesaId, navegar }) {
           <div>
             <div className="flex justify-between text-sm mb-1.5">
               <span className="text-zinc-400">
-                Recebido <strong className="text-white tabular-nums">{moeda(recebido)}</strong> de {moeda(total)}
+                Recebido <strong className="text-tinta tabular-nums">{moeda(recebido)}</strong> de {moeda(total)}
               </span>
               <span className={`font-semibold tabular-nums ${todosPagaram ? "text-green-400" : "text-zinc-400"}`}>
                 {todosPagaram

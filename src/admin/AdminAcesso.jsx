@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { clienteAdmin, traduzirErroAdmin } from "../store/supabaseAdmin";
-import { Botao } from "../components/ui";
+import { Botao, BotaoTema } from "../components/ui";
 import { classeInput } from "../utils/estilos";
 
 function Moldura({ titulo, subtitulo, children }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white flex items-center justify-center px-4 py-8">
+    <div className="relative min-h-screen bg-zinc-950 bg-[radial-gradient(ellipse_at_top,rgb(249_115_22/0.14),transparent_60%)] text-tinta flex items-center justify-center px-4 py-8">
+      <BotaoTema className="absolute top-3 right-3" />
       <main className="bg-zinc-900/80 p-6 sm:p-8 rounded-3xl shadow-2xl w-full max-w-sm border border-zinc-800 animate-entrada space-y-5">
         <div className="text-center">
           <div className="w-14 h-14 bg-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-3" aria-hidden>
@@ -76,7 +77,7 @@ export function AdminLogin({ onEntrou }) {
           {enviando ? "Entrando…" : "Entrar"}
         </Botao>
       </form>
-      <a href="#/" className="block text-center text-xs text-zinc-500 hover:text-white">
+      <a href="#/" className="block text-center text-xs text-zinc-500 hover:text-tinta">
         ← Voltar para o login dos restaurantes
       </a>
     </Moldura>
@@ -134,7 +135,7 @@ export function AdminCodigo2fa({ onOk, onSair }) {
           {enviando ? "Conferindo…" : "Confirmar"}
         </Botao>
       </form>
-      <button type="button" onClick={onSair} className="block mx-auto text-xs text-zinc-500 hover:text-white">
+      <button type="button" onClick={onSair} className="block mx-auto text-xs text-zinc-500 hover:text-tinta">
         Sair
       </button>
     </Moldura>
@@ -209,7 +210,7 @@ export function AdminCadastro2fa({ onOk, onSair }) {
           </Botao>
         </form>
       )}
-      <button type="button" onClick={onSair} className="block mx-auto text-xs text-zinc-500 hover:text-white">
+      <button type="button" onClick={onSair} className="block mx-auto text-xs text-zinc-500 hover:text-tinta">
         Sair
       </button>
     </Moldura>

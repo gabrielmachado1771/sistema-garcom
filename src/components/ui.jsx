@@ -1,6 +1,7 @@
 // Componentes visuais reutilizados pelas telas.
 
 import { FUNCOES, chaveItem, iniciais } from "../store/regras";
+import { useTema } from "../utils/tema";
 
 const tamanhosAvatar = { p: "w-8 h-8 text-xs", m: "w-12 h-12 text-base", g: "w-16 h-16 text-xl" };
 
@@ -17,7 +18,7 @@ export function Avatar({ funcionario, tamanho = "m" }) {
 
 export function Pagina({ children, largura = "max-w-lg", className = "" }) {
   return (
-    <main className={`text-white p-4 animate-entrada ${className}`}>
+    <main className={`text-tinta p-4 animate-entrada ${className}`}>
       <div className={`${largura} mx-auto space-y-4`}>{children}</div>
     </main>
   );
@@ -27,8 +28,8 @@ export function Cabecalho({ titulo, subtitulo, children }) {
   return (
     <header className="flex items-start justify-between gap-3">
       <div className="min-w-0">
-        <h1 className="text-2xl font-bold text-orange-500 truncate">{titulo}</h1>
-        {subtitulo && <div className="text-sm text-zinc-400">{subtitulo}</div>}
+        <h1 className="text-2xl font-extrabold tracking-tight truncate">{titulo}</h1>
+        {subtitulo && <div className="text-sm text-zinc-400 mt-0.5">{subtitulo}</div>}
       </div>
       {children && <div className="flex gap-2 shrink-0">{children}</div>}
     </header>
@@ -36,18 +37,18 @@ export function Cabecalho({ titulo, subtitulo, children }) {
 }
 
 const variantes = {
-  primario: "bg-orange-500 hover:bg-orange-400 text-black",
-  secundario: "bg-zinc-800 hover:bg-zinc-700 text-white",
+  primario: "bg-orange-500 hover:bg-orange-600 text-black shadow-sm shadow-orange-500/20",
+  secundario: "bg-zinc-800 hover:bg-zinc-700 text-tinta border border-zinc-700/60",
   sucesso: "bg-green-600 hover:bg-green-500 text-white",
   perigo: "bg-red-600/80 hover:bg-red-600 text-white",
-  fantasma: "bg-transparent hover:bg-zinc-800 text-zinc-400 hover:text-white",
+  fantasma: "bg-transparent hover:bg-zinc-800 text-zinc-400 hover:text-tinta",
 };
 
 export function Botao({ variante = "secundario", className = "", ...props }) {
   return (
     <button
       type="button"
-      className={`rounded-xl font-semibold transition-all active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 ${variantes[variante]} ${className}`}
+      className={`min-h-11 inline-flex items-center justify-center gap-2 rounded-xl font-semibold transition-all active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:active:scale-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-orange-500 ${variantes[variante]} ${className}`}
       {...props}
     />
   );
@@ -64,7 +65,7 @@ export function BotaoVoltar({ onClick, children = "← Voltar" }) {
 export function Cartao({ className = "", children, ...props }) {
   return (
     <section
-      className={`bg-zinc-900/80 backdrop-blur rounded-2xl border border-zinc-800 shadow p-4 ${className}`}
+      className={`bg-zinc-900 rounded-2xl border border-zinc-800 p-4 ${className}`}
       {...props}
     >
       {children}
@@ -75,7 +76,7 @@ export function Cartao({ className = "", children, ...props }) {
 export function TituloSecao({ children, acao }) {
   return (
     <div className="flex items-center justify-between mb-3 gap-2">
-      <h2 className="font-bold text-xs text-zinc-400 uppercase tracking-wider">{children}</h2>
+      <h2 className="font-semibold text-xs text-zinc-500 uppercase tracking-widest">{children}</h2>
       {acao}
     </div>
   );
@@ -124,7 +125,7 @@ export function Modal({ titulo, aberto, onFechar, children }) {
   if (!aberto) return null;
   return (
     <div
-      className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
+      className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onFechar()}
       onKeyDown={(e) => e.key === "Escape" && onFechar()}
     >
@@ -132,7 +133,7 @@ export function Modal({ titulo, aberto, onFechar, children }) {
         role="dialog"
         aria-modal="true"
         aria-label={titulo}
-        className="bg-zinc-900 border border-zinc-800 w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 max-h-[92vh] overflow-y-auto animate-entrada"
+        className="bg-zinc-900 border border-zinc-800 shadow-2xl w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 max-h-[92vh] overflow-y-auto animate-entrada"
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">{titulo}</h2>
@@ -140,7 +141,7 @@ export function Modal({ titulo, aberto, onFechar, children }) {
             type="button"
             onClick={onFechar}
             aria-label="Fechar"
-            className="w-8 h-8 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800"
+            className="w-11 h-11 -mr-2 rounded-xl text-zinc-400 hover:text-tinta hover:bg-zinc-800"
           >
             ✕
           </button>
@@ -162,5 +163,21 @@ export function Campo({ rotulo, erro, dica, children }) {
         dica && <span className="block text-xs text-zinc-500 mt-1">{dica}</span>
       )}
     </label>
+  );
+}
+
+export function BotaoTema({ className = "" }) {
+  const [tema, alternar] = useTema();
+  const claro = tema === "claro";
+  return (
+    <button
+      type="button"
+      onClick={alternar}
+      aria-label={claro ? "Usar tema escuro" : "Usar tema claro"}
+      title={claro ? "Tema escuro" : "Tema claro"}
+      className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center text-lg text-zinc-400 hover:text-tinta hover:bg-zinc-800 transition ${className}`}
+    >
+      <span aria-hidden>{claro ? "☾" : "☀"}</span>
+    </button>
   );
 }

@@ -103,7 +103,7 @@ export default function PagamentoPessoa({ id, titulo, valor, detalhe, pagamento,
         <button
           type="button"
           onClick={() => onPagar({ forma: "misto", valores: {} }, true)}
-          className="mt-2 w-full py-2 rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-300 hover:border-orange-500/60 hover:text-white transition"
+          className="mt-2 w-full py-2 rounded-xl border border-dashed border-zinc-700 text-sm text-zinc-300 hover:border-orange-500/60 hover:text-tinta transition"
         >
           ➗ Pagar com mais de uma forma <span className="text-zinc-500">(ex.: parte no Pix, parte no dinheiro)</span>
         </button>
@@ -149,7 +149,7 @@ export default function PagamentoPessoa({ id, titulo, valor, detalhe, pagamento,
 
       <div className="flex gap-2">
         {pagamento && !misto && (
-          <button type="button" onClick={onDesfazer} className="px-3 py-2 text-sm text-zinc-400 hover:text-white">
+          <button type="button" onClick={onDesfazer} className="px-3 py-2 text-sm text-zinc-400 hover:text-tinta">
             Desfazer
           </button>
         )}

@@ -72,7 +72,7 @@ function EntradaPorLink({ codigo, navegar }) {
 
   if (!erro) return <Carregando texto="Abrindo o restaurante…" />;
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col items-center justify-center gap-4 p-6 text-center">
+    <div className="min-h-screen bg-zinc-950 text-tinta flex flex-col items-center justify-center gap-4 p-6 text-center">
       <p className="text-4xl" aria-hidden>
         🍽
       </p>

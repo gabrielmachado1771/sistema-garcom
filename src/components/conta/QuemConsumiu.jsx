@@ -47,7 +47,7 @@ export default function QuemConsumiu({ unidades, atribuicao, partes, pessoaAtiva
             <strong className="text-orange-400">2.</strong> …e depois no que <strong>{nomes[pessoaAtiva]}</strong> consumiu
           </p>
           {algumMarcado && (
-            <button type="button" onClick={onLimpar} className="text-xs text-zinc-500 hover:text-white shrink-0">
+            <button type="button" onClick={onLimpar} className="text-xs text-zinc-500 hover:text-tinta shrink-0">
               Limpar
             </button>
           )}

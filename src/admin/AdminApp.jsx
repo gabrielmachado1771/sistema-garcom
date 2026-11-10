@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { clienteAdmin, rpcAdmin } from "../store/supabaseAdmin";
+import { BotaoTema } from "../components/ui";
 import { AdminCadastro2fa, AdminCodigo2fa, AdminLogin, AdminSemBanco, AdminSemPermissao } from "./AdminAcesso";
 import AdminRestaurantes from "./AdminRestaurantes";
 import AdminNovo from "./AdminNovo";
@@ -74,8 +75,8 @@ export default function AdminApp({ rota, navegar }) {
   const abaAtiva = secao === "relatorios" || secao === "auditoria" ? secao : undefined;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white">
-      <header className="sticky top-0 z-30 bg-zinc-950/90 backdrop-blur border-b border-purple-900/50">
+    <div className="min-h-screen bg-zinc-950 text-tinta">
+      <header className="sticky top-0 z-30 bg-zinc-900/90 backdrop-blur-md border-b border-zinc-800">
         <div className="max-w-5xl mx-auto px-4 h-14 flex items-center gap-3">
           <span className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center shrink-0" aria-hidden>
             🛡️
@@ -90,7 +91,7 @@ export default function AdminApp({ rota, navegar }) {
                   onClick={() => navegar("admin", a.id)}
                   aria-current={ativa ? "page" : undefined}
                   className={`shrink-0 px-3 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-1.5 ${
-                    ativa ? "bg-zinc-800 text-purple-300" : "text-zinc-400 hover:text-white hover:bg-zinc-900"
+                    ativa ? "bg-zinc-800 text-purple-300" : "text-zinc-400 hover:text-tinta hover:bg-zinc-900"
                   }`}
                 >
                   <span aria-hidden>{a.icone}</span>
@@ -99,8 +100,9 @@ export default function AdminApp({ rota, navegar }) {
               );
             })}
           </nav>
+          <BotaoTema />
           <span className="hidden md:block text-sm text-zinc-400 truncate max-w-40">{eu?.nome}</span>
-          <button type="button" onClick={sair} className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800">
+          <button type="button" onClick={sair} className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-tinta hover:bg-zinc-800">
             Sair
           </button>
         </div>

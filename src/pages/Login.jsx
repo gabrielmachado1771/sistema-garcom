@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRestaurante } from "../store/contexto";
 import { FUNCOES } from "../store/regras";
 import { PIN_PADRAO_ADMIN, PIN_TAMANHO } from "../utils/pin";
-import { Avatar } from "../components/ui";
+import { Avatar, BotaoTema } from "../components/ui";
 import BotaoInstalar from "../components/BotaoInstalar";
 import { classeInput } from "../utils/estilos";
 
@@ -158,7 +158,7 @@ function TecladoPin({ funcionario, onVoltar, onEntrar }) {
 
   return (
     <div className="text-center">
-      <button type="button" onClick={onVoltar} className="text-sm text-zinc-400 hover:text-white mb-4">
+      <button type="button" onClick={onVoltar} className="text-sm text-zinc-400 hover:text-tinta mb-4">
         ← Trocar usuário
       </button>
       <div className="flex flex-col items-center gap-2 mb-6">
@@ -215,8 +215,9 @@ export default function Login() {
   const tentarEntrar = useCallback((pin) => entrar(selecionadoId, pin), [entrar, selecionadoId]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-zinc-950 to-zinc-900 text-white flex items-center justify-center px-4 py-8">
-      <main className="bg-zinc-900/80 backdrop-blur p-6 sm:p-8 rounded-3xl shadow-2xl w-full max-w-md border border-zinc-800 animate-entrada">
+    <div className="relative min-h-screen bg-zinc-950 bg-[radial-gradient(ellipse_at_top,rgb(249_115_22/0.14),transparent_60%)] text-tinta flex items-center justify-center px-4 py-8">
+      <BotaoTema className="absolute top-3 right-3" />
+      <main className="bg-zinc-900 p-6 sm:p-8 rounded-3xl shadow-2xl shadow-black/20 w-full max-w-md border border-zinc-800 animate-entrada">
         {modo === "nuvem" && !restaurante ? (
           <CodigoRestaurante />
         ) : selecionado ? (
@@ -235,7 +236,7 @@ export default function Login() {
               <h1 className="text-2xl font-bold text-orange-500">{empresa?.nome ?? "Sistema Restaurante"}</h1>
               <p className="text-zinc-400 text-sm">Quem está entrando?</p>
               {modo === "nuvem" && (
-                <button type="button" onClick={esquecerRestaurante} className="text-xs text-zinc-500 hover:text-white underline mt-1">
+                <button type="button" onClick={esquecerRestaurante} className="text-xs text-zinc-500 hover:text-tinta underline mt-1">
                   Não é este restaurante? Trocar
                 </button>
               )}
@@ -281,7 +282,7 @@ export default function Login() {
 
             {adminComPinPadrao && (
               <p className="mt-6 text-xs text-zinc-400 bg-zinc-800/60 rounded-xl p-3 text-center">
-                Primeiro acesso: entre como <b className="text-white">{adminComPinPadrao.nome}</b> com o PIN{" "}
+                Primeiro acesso: entre como <b className="text-tinta">{adminComPinPadrao.nome}</b> com o PIN{" "}
                 {modo === "local" ? <b className="text-orange-400">{PIN_PADRAO_ADMIN}</b> : "provisório que você recebeu"}, troque-o
                 e cadastre sua equipe em <b>Equipe</b>.
               </p>

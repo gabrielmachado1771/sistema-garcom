@@ -181,7 +181,7 @@ function QuantidadeMesas({ mesas, onFechar }) {
   );
 }
 
-function Indicador({ rotulo, valor, detalhe, cor = "text-white", onClick }) {
+function Indicador({ rotulo, valor, detalhe, cor = "text-tinta", onClick }) {
   return (
     <button
       type="button"

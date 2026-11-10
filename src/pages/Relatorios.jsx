@@ -152,7 +152,7 @@ export default function Relatorios() {
                 )}
                 {!umDia && (
                   <details className="mt-3 text-sm">
-                    <summary className="cursor-pointer text-zinc-400 hover:text-white select-none">Ver em tabela</summary>
+                    <summary className="cursor-pointer text-zinc-400 hover:text-tinta select-none">Ver em tabela</summary>
                     <table className="w-full mt-2 text-sm">
                       <thead>
                         <tr className="text-left text-xs text-zinc-500">
@@ -229,7 +229,7 @@ export default function Relatorios() {
                 </div>
                 {r.produtos.length > 10 && (
                   <details className="mt-3 text-sm">
-                    <summary className="cursor-pointer text-zinc-400 hover:text-white select-none">
+                    <summary className="cursor-pointer text-zinc-400 hover:text-tinta select-none">
                       Ver todos os {r.produtos.length} produtos
                     </summary>
                     <ul className="mt-2 divide-y divide-zinc-800/60">

@@ -307,7 +307,7 @@ export default function Mesa({ mesaId, navegar, voltarPara = "garcom" }) {
         </div>
         {consumidos.length > 0 && (
           <details className="mt-3 text-sm group">
-            <summary className="cursor-pointer text-zinc-400 hover:text-white select-none">
+            <summary className="cursor-pointer text-zinc-400 hover:text-tinta select-none">
               Ver {plural(contarItens(consumidos), "item consumido", "itens consumidos")}
             </summary>
             <div className="mt-2">
